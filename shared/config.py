@@ -1,0 +1,30 @@
+import os
+import redis
+import json
+from typing import Any, Dict
+from google import genai
+from google.genai import types
+
+# All values come from environment variables set in docker-compose.yml
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise EnvironmentError("GEMINI_API_KEY is not set. Add it to docker-compose.yml under environment:")
+
+APP_NAME = os.environ.get("APP_NAME", "microgrid_control")
+USER_ID = os.environ.get("USER_ID", "grid_operator")
+MODEL_NAME = os.environ.get("MODEL_NAME", "gemini-2.5-flash-lite")
+AGENT_ID = os.environ.get("AGENT_ID")
+JWT_SECRET = os.environ.get("JWT_SECRET")
+REDIS_HOST = os.environ.get("REDIS_HOST", "redis")   # matches service name in docker-compose.yml
+REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+
+# Shared Redis client - all containers connect to the same Redis service
+redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+# Retry config for Gemini API calls
+retry_config = types.HttpRetryOptions(attempts=5, exp_base=7, initial_delay=1, http_status_codes=[429, 500, 503, 504])
+
+# GenAI client
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+print(f"Agent {AGENT_ID} started. Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")

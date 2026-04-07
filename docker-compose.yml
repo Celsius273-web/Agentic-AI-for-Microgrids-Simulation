@@ -1,0 +1,186 @@
+# Microgrid Agent System - Docker Compose
+#
+# HOW TO USE:
+#   1. Create a .env file in this directory:
+#        GEMINI_API_KEY=your_key_here
+#        JWT_SECRET=choose_a_long_random_string
+#   2. Run:  docker compose up --build
+#   3. Stop: docker compose down
+#
+# Each agent runs in its own container.
+# They communicate over the internal "microgrid-net" network using service names as hostnames.
+# e.g. control-agent calls http://solar-agent:8000/command
+
+version: "3.9"
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: microgrid-redis
+    ports:
+      - "6379:6379"         # Exposed to host for debugging. Remove in production.
+    networks:
+      - microgrid-net
+    restart: unless-stopped
+
+  microgrid-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: microgrid-agent
+    volumes:
+      - ./microgrid_agent/agent.py:/app/agent.py   # Mount this agent's code
+      - ./shared:/app/shared                        # Mount shared modules
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - AGENT_ID=microgrid-agent
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=gemini-2.5-flash-lite
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    networks:
+      - microgrid-net
+    restart: unless-stopped
+
+  control-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: control-agent
+    volumes:
+      - ./control_agent/agent.py:/app/agent.py
+      - ./shared:/app/shared
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - AGENT_ID=control-agent
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=gemini-2.5-flash-lite
+    ports:
+      - "8001:8000"
+    depends_on:
+      - redis
+    networks:
+      - microgrid-net
+    restart: unless-stopped
+
+  researcher-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: researcher-agent
+    volumes:
+      - ./researcher_agent/agent.py:/app/agent.py
+      - ./shared:/app/shared
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - AGENT_ID=researcher-agent
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MODEL_NAME=gemini-2.5-flash-lite
+    ports:
+      - "8002:8000"
+    depends_on:
+      - redis
+    networks:
+      - microgrid-net
+    restart: unless-stopped
+
+  solar-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: solar-agent
+    volumes:
+      - ./solar_agent/agent.py:/app/agent.py
+      - ./shared:/app/shared
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - AGENT_ID=solar-agent
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8003:8000"
+    depends_on:
+      - redis
+    networks:
+      - microgrid-net
+    restart: unless-stopped
+
+  wind-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wind-agent
+    volumes:
+      - ./wind_agent/agent.py:/app/agent.py
+      - ./shared:/app/shared
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - AGENT_ID=wind-agent
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8004:8000"
+    depends_on:
+      - redis
+    networks:
+      - microgrid-net
+    restart: unless-stopped
+
+  battery-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: battery-agent
+    volumes:
+      - ./battery_agent/agent.py:/app/agent.py
+      - ./shared:/app/shared
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - AGENT_ID=battery-agent
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8005:8000"
+    depends_on:
+      - redis
+    networks:
+      - microgrid-net
+    restart: unless-stopped
+
+  load-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: load-agent
+    volumes:
+      - ./load_agent/agent.py:/app/agent.py
+      - ./shared:/app/shared
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - AGENT_ID=load-agent
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8006:8000"
+    depends_on:
+      - redis
+    networks:
+      - microgrid-net
+    restart: unless-stopped
+
+networks:
+  microgrid-net:
+    driver: bridge

@@ -1,0 +1,10 @@
+google-genai
+google-adk
+redis
+PyJWT
+requests
+fastapi
+uvicorn
+pykqml
+PyJWT
+fastapi
