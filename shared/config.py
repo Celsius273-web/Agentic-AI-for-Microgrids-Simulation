@@ -18,6 +18,14 @@ JWT_SECRET = os.environ.get("JWT_SECRET")
 REDIS_HOST = os.environ.get("REDIS_HOST", "redis")   # matches service name in docker-compose.yml
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 
+# Local Audit Configuration
+AUDIT_DB_PATH = os.environ.get("AUDIT_DB_PATH", "audit_trail.db")
+ENABLE_LOCAL_INSTRUMENTATION = os.environ.get("ENABLE_LOCAL_INSTRUMENTATION", "true").lower() == "true"
+
+# Agent Authentication and Identity Verification
+AGENT_ROLE = os.environ.get("AGENT_ROLE", "control")  # control, researcher, solar, wind, battery, load
+VERIFIED_ACCOUNT = os.environ.get("VERIFIED_ACCOUNT", "unauthenticated")
+
 # Shared Redis client - all containers connect to the same Redis service
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 

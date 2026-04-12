@@ -5,8 +5,18 @@ from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
 from google.adk.plugins.logging_plugin import LoggingPlugin
 
-from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config
+from shared.config import (
+    MODEL_NAME, 
+    GEMINI_API_KEY, 
+    retry_config, 
+    AGENT_ID, 
+    AGENT_ROLE,
+    AUDIT_DB_PATH,
+    ENABLE_LOCAL_INSTRUMENTATION,
+    VERIFIED_ACCOUNT,
+)
 from shared.state import _read_state, _write_state
+from shared.instrumentation_plugin import GlobalInstrumentationPlugin
 from shared.agent_interfaces import (
     RAG_access,
     solar_agent_access,
@@ -210,9 +220,47 @@ You work collaboratively with all agents, providing strategic guidance while all
     ]
 )
 
-# --- Runner ---
+# --- Runner with Local Instrumentation ---
 
 if __name__ == "__main__":
-    runner = InMemoryRunner(agent=microgrid_agent, plugins=[LoggingPlugin()])
-    print("MicrogridAgent runner started.")
+    # Prepare verified identity
+    verified_account = VERIFIED_ACCOUNT or "microgrid-agent@microgrid.local"
+    
+    # Create plugin list
+    plugins = [LoggingPlugin()]
+    
+    # Conditional: Add local instrumentation plugin
+    if ENABLE_LOCAL_INSTRUMENTATION:
+        print("=" * 70)
+        print("REGISTERING LOCAL INSTRUMENTATION PLUGIN")
+        print("=" * 70)
+        
+        # Initialize plugin with local SQLite backend
+        instrumentation_plugin = GlobalInstrumentationPlugin(
+            agent_id=AGENT_ID or "microgrid-agent",
+            agent_role=AGENT_ROLE,
+            verified_account=verified_account,
+            db_path=AUDIT_DB_PATH,
+            enable_local_logging=True
+        )
+        
+        # Add to plugins
+        plugins.append(instrumentation_plugin)
+        
+        print(f"✓ Agent ID: {AGENT_ID or 'microgrid-agent'}")
+        print(f"✓ Verified Account: {verified_account}")
+        print(f"✓ Audit DB: {AUDIT_DB_PATH}")
+        print("\nCapturing lifecycle hooks:")
+        print("  - on_agent_start: Agent initialization")
+        print("  - on_tool_start: MCP ground truth inputs")
+        print("  - on_tool_end: Tool outputs and side effects")
+        print("  - on_model_end: KQML performatives")
+        print("=" * 70)
+    else:
+        print("⚠ Local instrumentation disabled")
+    
+    # Create runner with all plugins
+    runner = InMemoryRunner(agent=microgrid_agent, plugins=plugins)
+    print("\n✓ MicrogridAgent runner started with lifecycle hook interception")
+    print(f"  All events stored in: {AUDIT_DB_PATH}")
     # TODO: replace with FastAPI HTTP server for inter-agent communication
