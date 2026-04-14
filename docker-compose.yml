@@ -11,8 +11,6 @@
 # They communicate over the internal "microgrid-net" network using service names as hostnames.
 # e.g. control-agent calls http://solar-agent:8000/command
 
-version: "3.9"
-
 services:
 
   redis:
@@ -30,15 +28,15 @@ services:
       dockerfile: Dockerfile
     container_name: microgrid-agent
     volumes:
-      - ./microgrid_agent/agent.py:/app/agent.py   # Mount this agent's code
-      - ./shared:/app/shared                        # Mount shared modules
+      - ./microgrid_agent.py:/app/microgrid_agent.py
+      - ./shared:/app/shared
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - JWT_SECRET=${JWT_SECRET}
+      - AGENT_FILE=microgrid_agent.py
       - AGENT_ID=microgrid-agent
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - MODEL_NAME=gemini-2.5-flash-lite
     ports:
       - "8000:8000"
     depends_on:
@@ -53,15 +51,15 @@ services:
       dockerfile: Dockerfile
     container_name: control-agent
     volumes:
-      - ./control_agent/agent.py:/app/agent.py
-      - ./shared:/app/shared
+    - ./control_agent.py:/app/control_agent.py
+    - ./shared:/app/shared
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - JWT_SECRET=${JWT_SECRET}
+      - AGENT_FILE=control_agent.py
       - AGENT_ID=control-agent
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - MODEL_NAME=gemini-2.5-flash-lite
     ports:
       - "8001:8000"
     depends_on:
@@ -76,15 +74,15 @@ services:
       dockerfile: Dockerfile
     container_name: researcher-agent
     volumes:
-      - ./researcher_agent/agent.py:/app/agent.py
+      - ./researcher_agent.py:/app/researcher_agent.py
       - ./shared:/app/shared
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - JWT_SECRET=${JWT_SECRET}
+      - AGENT_FILE=researcher_agent.py
       - AGENT_ID=researcher-agent
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - MODEL_NAME=gemini-2.5-flash-lite
     ports:
       - "8002:8000"
     depends_on:
@@ -93,93 +91,97 @@ services:
       - microgrid-net
     restart: unless-stopped
 
-  solar-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: solar-agent
-    volumes:
-      - ./solar_agent/agent.py:/app/agent.py
-      - ./shared:/app/shared
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - JWT_SECRET=${JWT_SECRET}
-      - AGENT_ID=solar-agent
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    ports:
-      - "8003:8000"
-    depends_on:
-      - redis
-    networks:
-      - microgrid-net
-    restart: unless-stopped
+  # solar-agent:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: solar-agent
+  #   volumes:
+  #     - ./solar_agent.py
+  #     - ./shared:/app/shared
+  #   environment:
+  #     - GEMINI_API_KEY=${GEMINI_API_KEY}
+  #     - JWT_SECRET=${JWT_SECRET}
+  #     - AGENT_FILE=solar_agent.py
+  #     - AGENT_ID=solar-agent
+  #     - REDIS_HOST=redis
+  #     - REDIS_PORT=6379
+  #   ports:
+  #     - "8003:8000"
+  #   depends_on:
+  #     - redis
+  #   networks:
+  #     - microgrid-net
+  #   restart: unless-stopped
 
-  wind-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: wind-agent
-    volumes:
-      - ./wind_agent/agent.py:/app/agent.py
-      - ./shared:/app/shared
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - JWT_SECRET=${JWT_SECRET}
-      - AGENT_ID=wind-agent
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    ports:
-      - "8004:8000"
-    depends_on:
-      - redis
-    networks:
-      - microgrid-net
-    restart: unless-stopped
+  # wind-agent:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: wind-agent
+  #   volumes:
+  #     - ./wind_agent.py
+  #     - ./shared:/app/shared
+  #   environment:
+  #     - GEMINI_API_KEY=${GEMINI_API_KEY}
+  #     - JWT_SECRET=${JWT_SECRET}
+  #     - AGENT_FILE=wind_agent.py
+  #     - AGENT_ID=wind-agent
+  #     - REDIS_HOST=redis
+  #     - REDIS_PORT=6379
+  #   ports:
+  #     - "8004:8000"
+  #   depends_on:
+  #     - redis
+  #   networks:
+  #     - microgrid-net
+  #   restart: unless-stopped
 
-  battery-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: battery-agent
-    volumes:
-      - ./battery_agent/agent.py:/app/agent.py
-      - ./shared:/app/shared
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - JWT_SECRET=${JWT_SECRET}
-      - AGENT_ID=battery-agent
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    ports:
-      - "8005:8000"
-    depends_on:
-      - redis
-    networks:
-      - microgrid-net
-    restart: unless-stopped
+  # battery-agent:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: battery-agent
+  #   volumes:
+  #     - ./battery_agent.py
+  #     - ./shared:/app/shared
+  #   environment:
+  #     - GEMINI_API_KEY=${GEMINI_API_KEY}
+  #     - JWT_SECRET=${JWT_SECRET}
+  #     - AGENT_FILE=battery_agent.py
+  #     - AGENT_ID=battery-agent
+  #     - REDIS_HOST=redis
+  #     - REDIS_PORT=6379
+  #   ports:
+  #     - "8005:8000"
+  #   depends_on:
+  #     - redis
+  #   networks:
+  #     - microgrid-net
+  #   restart: unless-stopped
 
-  load-agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: load-agent
-    volumes:
-      - ./load_agent/agent.py:/app/agent.py
-      - ./shared:/app/shared
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - JWT_SECRET=${JWT_SECRET}
-      - AGENT_ID=load-agent
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    ports:
-      - "8006:8000"
-    depends_on:
-      - redis
-    networks:
-      - microgrid-net
-    restart: unless-stopped
+  # load-agent:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: load-agent
+  #   volumes:
+  #     - ./load_agent.py
+  #     - ./shared:/app/shared
+  #   environment:
+  #     - GEMINI_API_KEY=${GEMINI_API_KEY}
+  #     - JWT_SECRET=${JWT_SECRET}
+  #     - AGENT_FILE=load_agent.py
+  #     - AGENT_ID=load-agent
+  #     - REDIS_HOST=redis
+  #     - REDIS_PORT=6379
+  #   ports:
+  #     - "8006:8000"
+  #   depends_on:
+  #     - redis
+  #   networks:
+  #     - microgrid-net
+  #   restart: unless-stopped
 
 networks:
   microgrid-net:

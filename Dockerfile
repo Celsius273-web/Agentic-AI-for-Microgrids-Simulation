@@ -1,17 +1,16 @@
-# Shared Dockerfile - used by all agent containers
-# Each agent folder mounts its own agent.py and the shared/ folder
-
 FROM python:3.11-slim
 
 WORKDIR /app
 
+# STEP 1: Copy ONLY the requirements file first
 COPY requirements.txt .
+
+# STEP 2: Install libraries (This layer is now cached!)
+# Docker will SKIP this step next time unless requirements.txt changes
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy shared modules and the specific agent code
+
 COPY shared/ ./shared/
-COPY agent.py .
+COPY . .
 
-EXPOSE 8000
-
-CMD ["python", "agent.py"]
+CMD python ${AGENT_FILE}

@@ -1,0 +1,15 @@
+.venv/
+.env
+__pycache__/
+*.py[cod]
+*.so
+.DS_Store
+.cursor/
+.vscode/
+
+audit_trail.db
+audit_trail.db-shm
+audit_trail.db-wal
+
+# local scratch
+test.py
