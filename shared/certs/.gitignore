@@ -1,0 +1,35 @@
+# Certificate Private Keys - NEVER COMMIT THESE
+*.key
+ca.key
+*-server.key
+*-client.key
+
+# Certificate Revocation Lists
+*.crl
+
+# OpenSSL Database Files
+.index.txt
+.index.txt.old
+.serial.txt
+.serial.txt.old
+.rand
+
+# CSR (Certificate Signing Request) files - temporary
+*.csr
+
+# OpenSSL Config Files (generated)
+*-csr.conf
+ca.conf
+
+# Certificate Manifest and Logs
+.cert_manifest.txt
+*.log
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

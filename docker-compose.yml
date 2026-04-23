@@ -1,16 +1,7 @@
-# Microgrid Agent System - Docker Compose
-#
-# HOW TO USE:
-#   1. Create a .env file in this directory:
-#        GEMINI_API_KEY=your_key_here
-#        JWT_SECRET=choose_a_long_random_string
-#   2. Run:  docker compose up --build
-#   3. Stop: docker compose down
-#
-# Each agent runs in its own container.
-# They communicate over the internal "microgrid-net" network using service names as hostnames.
+# Microgrid Agent System - Docker Compose File 
+# All agents share the same Redis service and mTLS certificates.
+# Agents communicate over the internal "microgrid-net" network using service names as hostnames.
 # e.g. control-agent calls http://solar-agent:8000/command
-
 services:
 
   redis:
@@ -30,15 +21,22 @@ services:
     volumes:
       - ./microgrid_agent.py:/app/microgrid_agent.py
       - ./shared:/app/shared
+      - ./shared/certs:/app/shared/certs:ro
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - JWT_SECRET=${JWT_SECRET}
       - AGENT_FILE=microgrid_agent.py
       - AGENT_ID=microgrid-agent
+      - AGENT_ROLE=control
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - CERTS_DIR=/app/shared/certs
+      - ENABLE_MTLS=true
+      - VERIFY_PEER_CERTS=true
+      - MTLS_SERVER_PORT=8443
     ports:
       - "8000:8000"
+      - "8443:8443"
     depends_on:
       - redis
     networks:
@@ -51,17 +49,24 @@ services:
       dockerfile: Dockerfile
     container_name: control-agent
     volumes:
-    - ./control_agent.py:/app/control_agent.py
-    - ./shared:/app/shared
+      - ./control_agent.py:/app/control_agent.py
+      - ./shared:/app/shared
+      - ./shared/certs:/app/shared/certs:ro
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - JWT_SECRET=${JWT_SECRET}
       - AGENT_FILE=control_agent.py
       - AGENT_ID=control-agent
+      - AGENT_ROLE=control
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - CERTS_DIR=/app/shared/certs
+      - ENABLE_MTLS=true
+      - VERIFY_PEER_CERTS=true
+      - MTLS_SERVER_PORT=8443
     ports:
       - "8001:8000"
+      - "8444:8443"
     depends_on:
       - redis
     networks:
@@ -74,17 +79,24 @@ services:
       dockerfile: Dockerfile
     container_name: researcher-agent
     volumes:
-      - ./researcher_agent.py:/app/researcher_agent.py
+      - ./research_agent.py:/app/research_agent.py
       - ./shared:/app/shared
+      - ./shared/certs:/app/shared/certs:ro
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - JWT_SECRET=${JWT_SECRET}
-      - AGENT_FILE=researcher_agent.py
+      - AGENT_FILE=research_agent.py
       - AGENT_ID=researcher-agent
+      - AGENT_ROLE=researcher
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - CERTS_DIR=/app/shared/certs
+      - ENABLE_MTLS=true
+      - VERIFY_PEER_CERTS=true
+      - MTLS_SERVER_PORT=8443
     ports:
       - "8002:8000"
+      - "8445:8443"
     depends_on:
       - redis
     networks:

@@ -26,6 +26,34 @@ ENABLE_LOCAL_INSTRUMENTATION = os.environ.get("ENABLE_LOCAL_INSTRUMENTATION", "t
 AGENT_ROLE = os.environ.get("AGENT_ROLE", "control")  # control, researcher, solar, wind, battery, load
 VERIFIED_ACCOUNT = os.environ.get("VERIFIED_ACCOUNT", "unauthenticated")
 
+# mTLS Configuration
+CERTS_DIR = os.environ.get("CERTS_DIR", "/app/shared/certs")
+ENABLE_MTLS = os.environ.get("ENABLE_MTLS", "true").lower() == "true"
+VERIFY_PEER_CERTS = os.environ.get("VERIFY_PEER_CERTS", "true").lower() == "true"
+MTLS_SERVER_PORT = int(os.environ.get("MTLS_SERVER_PORT", 8443))
+
+# Certificate Paths (auto-constructed based on AGENT_ID)
+if AGENT_ID:
+    SERVER_CERT = f"{CERTS_DIR}/{AGENT_ID}-server.crt"
+    SERVER_KEY = f"{CERTS_DIR}/{AGENT_ID}-server.key"
+    CLIENT_CERT = f"{CERTS_DIR}/{AGENT_ID}-client.crt"
+    CLIENT_KEY = f"{CERTS_DIR}/{AGENT_ID}-client.key"
+else:
+    SERVER_CERT = None
+    SERVER_KEY = None
+    CLIENT_CERT = None
+    CLIENT_KEY = None
+
+CA_CERT = f"{CERTS_DIR}/ca.crt"
+
+# Log mTLS configuration on startup instead of in agent code or in Redis
+if ENABLE_MTLS:
+    print(f"mTLS enabled on port {MTLS_SERVER_PORT}")
+    if AGENT_ID:
+        print(f"  Server cert: {SERVER_CERT}")
+        print(f"  Client cert: {CLIENT_CERT}")
+    print(f"  Peer verification: {VERIFY_PEER_CERTS}")
+
 # Shared Redis client - all containers connect to the same Redis service
 redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
