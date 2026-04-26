@@ -144,10 +144,20 @@ README.md                           # Full docs
 
 ## Test mTLS Connection
 
-Inside Docker container:
+Default (host-based, runtime image):
 
 ```bash
-curl --cacert /app/shared/certs/ca.crt \
+curl --cacert shared/certs/ca.crt \
+     --cert shared/certs/microgrid-agent-client.crt \
+     --key shared/certs/microgrid-agent-client.key \
+     https://localhost:8444/health
+```
+
+Optional in-container debug mode only:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.debug.yml up --build
+docker exec microgrid-agent curl --cacert /app/shared/certs/ca.crt \
      --cert /app/shared/certs/microgrid-agent-client.crt \
      --key /app/shared/certs/microgrid-agent-client.key \
      https://control-agent:8443/health
@@ -191,6 +201,7 @@ VERIFY_PEER_CERTS=true
 - [ ] .gitignore includes *.key
 - [ ] ca.key backed up securely
 - [ ] Certs mounted read-only (`:ro`) in Docker
+- [ ] Certs/keys are never copied into Docker image layers
 - [ ] Certificate manifest reviewed (.cert_manifest.txt)
 - [ ] Fingerprints logged on agent startup
 - [ ] All certs validated with `./generate_certs.sh validate`

@@ -17,6 +17,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     container_name: microgrid-agent
     volumes:
       - ./microgrid_agent.py:/app/microgrid_agent.py
@@ -47,6 +48,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     container_name: control-agent
     volumes:
       - ./control_agent.py:/app/control_agent.py
@@ -77,6 +79,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     container_name: researcher-agent
     volumes:
       - ./research_agent.py:/app/research_agent.py

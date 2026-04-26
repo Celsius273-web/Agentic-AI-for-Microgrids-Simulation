@@ -5,6 +5,7 @@ from google.adk.plugins.logging_plugin import LoggingPlugin
 
 from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config
 from shared.agent_interfaces import RAG_access
+from shared.agent_server import run_agent_server
 
 # --- Agent Definition ---
 
@@ -41,5 +42,5 @@ You provide raw, unbiased information. The Control Agent and Microgrid Agent mak
 
 if __name__ == "__main__":
     runner = InMemoryRunner(agent=researcher_agent, plugins=[LoggingPlugin()])
-    print("ResearcherAgent runner started.")
-    # TODO: replace with FastAPI HTTP server for inter-agent communication
+    print("ResearcherAgent runner initialized.")
+    run_agent_server()

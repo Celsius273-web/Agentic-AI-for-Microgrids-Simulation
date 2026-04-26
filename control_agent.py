@@ -6,6 +6,7 @@ from google.adk.runners import InMemoryRunner
 from google.adk.plugins.logging_plugin import LoggingPlugin
 
 from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config
+from shared.agent_server import run_agent_server
 from shared.state import _read_state, _write_state
 
 
@@ -43,4 +44,5 @@ CONSTRAINTS:
 
 if __name__ == "__main__":
     runner = InMemoryRunner(agent=control_agent, plugins=[LoggingPlugin()])
-    print("ControlAgent runner started.")
+    print("ControlAgent runner initialized.")
+    run_agent_server()

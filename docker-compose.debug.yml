@@ -1,0 +1,18 @@
+services:
+  microgrid-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: debug
+
+  control-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: debug
+
+  researcher-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: debug
