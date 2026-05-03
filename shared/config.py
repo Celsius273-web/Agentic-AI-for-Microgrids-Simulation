@@ -21,18 +21,34 @@ REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 AUDIT_DB_PATH = os.environ.get("AUDIT_DB_PATH", "audit_trail.db")
 ENABLE_LOCAL_INSTRUMENTATION = os.environ.get("ENABLE_LOCAL_INSTRUMENTATION", "true").lower() == "true"
 
+# Authentication Mode Configuration
+AUTH_MODE = os.environ.get("AUTH_MODE", "local").lower()  # "local" for Keycloak, "cloud" for Google
+
 # OIDC Authentication Configuration
-OIDC_ISSUER = os.environ.get("OIDC_ISSUER")  # Google Cloud issuer URL
-OIDC_AUDIENCE = os.environ.get("OIDC_AUDIENCE", "microgrid-agents")  # Service audience claim
+OIDC_ISSUER = os.environ.get("OIDC_ISSUER")
+OIDC_AUDIENCE = os.environ.get("OIDC_AUDIENCE", "microgrid-agents")
 GOOGLE_APPLICATION_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
 TOKEN_CACHE_TTL = int(os.environ.get("TOKEN_CACHE_TTL", 300))  # 5 minutes, refresh before expiry
 OIDC_KEY_CACHE_TTL = int(os.environ.get("OIDC_KEY_CACHE_TTL", 3600))  # 1 hour for public keys
 
+# Keycloak-specific configuration for local auth
+KEYCLOAK_ADMIN_USER = os.environ.get("KEYCLOAK_ADMIN_USER", "admin")
+KEYCLOAK_ADMIN_PASSWORD = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin123")
+KEYCLOAK_REALM = os.environ.get("KEYCLOAK_REALM", "microgrid")
+KEYCLOAK_CLIENT_ID = os.environ.get("KEYCLOAK_CLIENT_ID", "microgrid-agents")
+KEYCLOAK_CLIENT_SECRET = os.environ.get("KEYCLOAK_CLIENT_SECRET", "microgrid-secret")
+
+# Set default OIDC issuer based on auth mode
+if not OIDC_ISSUER:
+    if AUTH_MODE == "local":
+        OIDC_ISSUER = f"http://keycloak:8080/realms/{KEYCLOAK_REALM}"
+    elif AUTH_MODE == "cloud":
+        OIDC_ISSUER = "https://accounts.google.com"
+    else:
+        raise EnvironmentError(f"Invalid AUTH_MODE: {AUTH_MODE}. Must be 'local' or 'cloud'")
+
 # Derived OIDC configuration
-if OIDC_ISSUER:
-    OIDC_DISCOVERY_URL = f"{OIDC_ISSUER}/.well-known/openid_configuration"
-else:
-    OIDC_DISCOVERY_URL = None
+OIDC_DISCOVERY_URL = f"{OIDC_ISSUER}/.well-known/openid_configuration"
 
 # Agent Authentication and Identity Verification
 AGENT_ROLE = os.environ.get("AGENT_ROLE", "control")  # control, researcher, solar, wind, battery, load
@@ -75,19 +91,26 @@ retry_config = types.HttpRetryOptions(attempts=5, exp_base=7, initial_delay=1, h
 # GenAI client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# OIDC Configuration Validation
-if not OIDC_ISSUER:
-    raise EnvironmentError("OIDC_ISSUER is required. Set it to Google Cloud issuer URL (e.g., https://accounts.google.com)")
+# Authentication Configuration Validation
+if AUTH_MODE == "cloud" and not GOOGLE_APPLICATION_CREDENTIALS:
+    print("WARNING: Cloud auth mode requires GOOGLE_APPLICATION_CREDENTIALS")
 
 if GOOGLE_APPLICATION_CREDENTIALS and not os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
     print(f"WARNING: GOOGLE_APPLICATION_CREDENTIALS file not found: {GOOGLE_APPLICATION_CREDENTIALS}")
 
-# Log OIDC configuration on startup (redact credential paths)
+# Log authentication configuration on startup
+print(f"Authentication Mode: {AUTH_MODE.upper()}")
 print(f"OIDC Authentication configured:")
 print(f"  Issuer: {OIDC_ISSUER}")
 print(f"  Audience: {OIDC_AUDIENCE}")
 print(f"  Discovery URL: {OIDC_DISCOVERY_URL}")
-print(f"  Service Account Creds: {'[CONFIGURED]' if GOOGLE_APPLICATION_CREDENTIALS else '[NOT SET]'}")
+
+if AUTH_MODE == "local":
+    print(f"  Keycloak Realm: {KEYCLOAK_REALM}")
+    print(f"  Keycloak Client: {KEYCLOAK_CLIENT_ID}")
+elif AUTH_MODE == "cloud":
+    print(f"  Service Account Creds: {'[CONFIGURED]' if GOOGLE_APPLICATION_CREDENTIALS else '[NOT SET]'}")
+
 print(f"  Token Cache TTL: {TOKEN_CACHE_TTL}s")
 print(f"  OIDC Key Cache TTL: {OIDC_KEY_CACHE_TTL}s")
 

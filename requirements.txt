@@ -1,6 +1,7 @@
 google-genai
 google-adk
 google-auth
+PyJWT[crypto]
 redis
 requests
 fastapi

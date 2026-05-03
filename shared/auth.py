@@ -6,11 +6,20 @@ import requests
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 from fastapi import Request, HTTPException, status
-from google.auth import default
-from google.oauth2 import service_account
-from google.oauth2.id_token import verify_oauth2_token
-from google.auth.transport.requests import Request as GoogleRequest
-from google.auth.exceptions import GoogleAuthError
+
+# Google Cloud imports - only used when AUTH_MODE is 'cloud'
+try:
+    from google.auth import default
+    from google.oauth2 import service_account
+    from google.oauth2.id_token import verify_oauth2_token
+    from google.auth.transport.requests import Request as GoogleRequest
+    from google.auth.exceptions import GoogleAuthError
+    GOOGLE_AUTH_AVAILABLE = True
+except ImportError:
+    GOOGLE_AUTH_AVAILABLE = False
+    # Create dummy classes to prevent import errors
+    class GoogleAuthError(Exception):
+        pass
 
 from . import config
 
@@ -20,16 +29,23 @@ _oidc_keys_cache = {}
 _token_cache = {}
 _cache_lock = threading.Lock()
 
-def load_service_account_creds() -> service_account.Credentials:
+def load_service_account_creds():
     """
-    Load service account credentials from GOOGLE_APPLICATION_CREDENTIALS.
+    Load service account credentials for Google Cloud authentication.
+    Only used when AUTH_MODE is 'cloud'.
     
     Returns:
-        service_account.Credentials: Loaded service account credentials
+        service_account.Credentials: Loaded service account credentials or None for local mode
         
     Raises:
-        EnvironmentError: If credentials cannot be loaded
+        EnvironmentError: If credentials cannot be loaded in cloud mode
     """
+    if config.AUTH_MODE != "cloud":
+        return None
+    
+    if not GOOGLE_AUTH_AVAILABLE:
+        raise EnvironmentError("Google Auth library not available. Install with: pip install google-auth")
+        
     try:
         if config.GOOGLE_APPLICATION_CREDENTIALS:
             creds = service_account.Credentials.from_service_account_file(
@@ -120,6 +136,7 @@ def _get_oidc_public_keys(jwks_uri: str) -> Dict[str, Any]:
 def verify_oidc_token(token: str) -> Dict[str, Any]:
     """
     Verify OIDC token signature and claims.
+    Supports both Keycloak and Google Cloud OIDC tokens.
     
     Args:
         token: ID token to verify
@@ -131,27 +148,31 @@ def verify_oidc_token(token: str) -> Dict[str, Any]:
         ValueError: If token is invalid or verification fails
     """
     try:
-        # Get discovery metadata for the issuer
-        metadata = get_oidc_discovery_metadata(config.OIDC_ISSUER)
-        jwks_uri = metadata.get("jwks_uri")
-        if not jwks_uri:
-            raise ValueError("No jwks_uri found in OIDC discovery metadata")
-        
-        # Verify token using Google's library
-        # This handles signature verification, expiry, and standard claims
-        claims = verify_oauth2_token(
-            token,
-            GoogleRequest(),
-            audience=config.OIDC_AUDIENCE
-        )
+        if config.AUTH_MODE == "cloud":
+            # Use Google's library for Google Cloud tokens
+            if not GOOGLE_AUTH_AVAILABLE:
+                raise ValueError("Google Auth library not available for cloud mode")
+            claims = verify_oauth2_token(
+                token,
+                GoogleRequest(),
+                audience=config.OIDC_AUDIENCE
+            )
+        else:
+            # For Keycloak or other OIDC providers, use manual verification
+            claims = _verify_generic_oidc_token(token)
         
         # Validate issuer
         if claims.get("iss") != config.OIDC_ISSUER:
             raise ValueError(f"Invalid issuer: expected {config.OIDC_ISSUER}, got {claims.get('iss')}")
         
-        # Validate audience
-        if claims.get("aud") != config.OIDC_AUDIENCE:
-            raise ValueError(f"Invalid audience: expected {config.OIDC_AUDIENCE}, got {claims.get('aud')}")
+        # Validate audience (more flexible for Keycloak)
+        token_aud = claims.get("aud")
+        if isinstance(token_aud, list):
+            if config.OIDC_AUDIENCE not in token_aud:
+                raise ValueError(f"Invalid audience: expected {config.OIDC_AUDIENCE} in {token_aud}")
+        else:
+            if token_aud != config.OIDC_AUDIENCE:
+                raise ValueError(f"Invalid audience: expected {config.OIDC_AUDIENCE}, got {token_aud}")
         
         # Add timestamp for audit trail
         claims["verified_at"] = datetime.now(timezone.utc).isoformat()
@@ -163,9 +184,111 @@ def verify_oidc_token(token: str) -> Dict[str, Any]:
     except Exception as e:
         raise ValueError(f"Token verification error: {e}")
 
+def _verify_generic_oidc_token(token: str) -> Dict[str, Any]:
+    """
+    Verify OIDC token using generic JWKS verification for non-Google providers.
+    
+    Args:
+        token: JWT token to verify
+        
+    Returns:
+        Dict containing token claims
+        
+    Raises:
+        ValueError: If token verification fails
+    """
+    import jwt
+    from jwt.algorithms import RSAAlgorithm
+    
+    # Get discovery metadata and public keys
+    metadata = get_oidc_discovery_metadata(config.OIDC_ISSUER)
+    jwks_uri = metadata.get("jwks_uri")
+    if not jwks_uri:
+        raise ValueError("No jwks_uri found in OIDC discovery metadata")
+    
+    jwks = _get_oidc_public_keys(jwks_uri)
+    
+    # Decode token header to get key ID
+    unverified_header = jwt.get_unverified_header(token)
+    kid = unverified_header.get("kid")
+    
+    # Find the public key
+    public_key = None
+    for key in jwks.get("keys", []):
+        if key.get("kid") == kid:
+            public_key = RSAAlgorithm.from_jwk(key)
+            break
+    
+    if not public_key:
+        raise ValueError(f"Public key not found for kid: {kid}")
+    
+    # Verify and decode token
+    claims = jwt.decode(
+        token,
+        public_key,
+        algorithms=["RS256"],
+        audience=config.OIDC_AUDIENCE,
+        issuer=config.OIDC_ISSUER,
+        options={"verify_exp": True, "verify_iat": True}
+    )
+    
+    return claims
+
+def _get_keycloak_client_token() -> str:
+    """
+    Get client credentials token from Keycloak for service-to-service auth.
+    
+    Returns:
+        str: Access token for Authorization header
+        
+    Raises:
+        ValueError: If token generation fails
+    """
+    cache_key = "keycloak_client_token"
+    current_time = time.time()
+    
+    with _cache_lock:
+        # Check cache first (refresh at 80% TTL)
+        if cache_key in _token_cache:
+            cached_token, timestamp, ttl = _token_cache[cache_key]
+            refresh_threshold = ttl * 0.8
+            if current_time - timestamp < refresh_threshold:
+                return cached_token
+    
+    # Get fresh token from Keycloak
+    try:
+        token_url = f"{config.OIDC_ISSUER}/protocol/openid-connect/token"
+        
+        data = {
+            'grant_type': 'client_credentials',
+            'client_id': config.KEYCLOAK_CLIENT_ID,
+            'client_secret': config.KEYCLOAK_CLIENT_SECRET,
+            'scope': 'openid email profile'
+        }
+        
+        response = requests.post(token_url, data=data, timeout=10)
+        response.raise_for_status()
+        
+        token_data = response.json()
+        access_token = token_data.get('access_token')
+        expires_in = token_data.get('expires_in', config.TOKEN_CACHE_TTL)
+        
+        if not access_token:
+            raise ValueError("No access token in Keycloak response")
+        
+        # Cache the token
+        with _cache_lock:
+            _token_cache[cache_key] = (access_token, current_time, expires_in)
+        
+        return access_token
+        
+    except Exception as e:
+        raise ValueError(f"Failed to get Keycloak client token: {e}")
+
 def get_service_account_token() -> str:
     """
     Generate fresh access token for outbound service-to-service calls.
+    Supports both Keycloak (local) and Google Cloud (cloud) authentication modes.
     Uses caching with TTL to avoid unnecessary token generation.
     
     Returns:
@@ -174,7 +297,24 @@ def get_service_account_token() -> str:
     Raises:
         ValueError: If token generation fails
     """
-    cache_key = "service_account_token"
+    if config.AUTH_MODE == "local":
+        return _get_keycloak_client_token()
+    elif config.AUTH_MODE == "cloud":
+        return _get_google_service_account_token()
+    else:
+        raise ValueError(f"Unsupported AUTH_MODE: {config.AUTH_MODE}")
+
+def _get_google_service_account_token() -> str:
+    """
+    Generate Google Cloud service account token for cloud mode.
+    
+    Returns:
+        str: Google Cloud access token
+        
+    Raises:
+        ValueError: If token generation fails
+    """
+    cache_key = "google_service_account_token"
     current_time = time.time()
     
     with _cache_lock:
@@ -188,6 +328,8 @@ def get_service_account_token() -> str:
     # Generate fresh token
     try:
         creds = load_service_account_creds()
+        if not creds:
+            raise ValueError("No service account credentials available")
         
         # Refresh credentials to get access token
         if not creds.valid or creds.expired:
@@ -202,7 +344,7 @@ def get_service_account_token() -> str:
         return token
         
     except Exception as e:
-        raise ValueError(f"Failed to generate service account token: {e}")
+        raise ValueError(f"Failed to generate Google service account token: {e}")
 
 def inject_verified_identity(invocation_context: Dict[str, Any], token_claims: Dict[str, Any]) -> None:
     """
