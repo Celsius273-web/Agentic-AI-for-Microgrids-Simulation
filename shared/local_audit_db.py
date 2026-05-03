@@ -45,6 +45,7 @@ class LocalAuditDB:
                 hook_name TEXT NOT NULL,
                 verified_account TEXT NOT NULL,
                 auth_timestamp TEXT NOT NULL,
+                oidc_claims TEXT,  -- Full OIDC token claims as JSON
                 tool_name TEXT,
                 tool_inputs TEXT,
                 tool_outputs TEXT,
@@ -64,6 +65,13 @@ class LocalAuditDB:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Add oidc_claims column if it doesn't exist (for existing databases)
+        try:
+            self.conn.execute("ALTER TABLE audit_events ADD COLUMN oidc_claims TEXT")
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
         
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS kqml_timeline (
@@ -102,7 +110,7 @@ class LocalAuditDB:
         try:
             self.conn.execute("""
                 INSERT INTO audit_events VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
             """, (
                 event.event_id,
@@ -113,6 +121,7 @@ class LocalAuditDB:
                 event.hook_name,
                 event.verified_account,
                 event.auth_timestamp,
+                json.dumps(event.oidc_claims) if event.oidc_claims else None,
                 event.tool_name,
                 json.dumps(event.tool_inputs) if event.tool_inputs else None,
                 json.dumps(event.tool_outputs) if event.tool_outputs else None,

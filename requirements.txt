@@ -1,7 +1,7 @@
 google-genai
 google-adk
+google-auth
 redis
-PyJWT
 requests
 fastapi
 uvicorn

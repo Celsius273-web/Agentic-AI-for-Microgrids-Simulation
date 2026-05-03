@@ -26,6 +26,7 @@ except ImportError:
     )
 
 from shared.local_audit_db import LocalAuditDB
+from shared import auth
 
 
 @dataclass
@@ -41,6 +42,7 @@ class AuditEvent:
     # Identity and authentication
     verified_account: str
     auth_timestamp: str
+    oidc_claims: Optional[Dict[str, Any]] = None  # Full OIDC token claims for compliance
     
     # Tool invocation context (for tool_start, tool_end, model_end)
     tool_name: Optional[str] = None
@@ -117,12 +119,19 @@ class GlobalInstrumentationPlugin(BasePlugin):
     
     def on_agent_start(self, agent_id: str, metadata: Dict[str, Any]) -> None:
         """
-        Hook: Agent initialization. Record verified identity and startup context.
+        Hook: Agent initialization. Record verified OIDC identity and startup context.
         
         Args:
             agent_id: Agent identifier from runner
             metadata: Agent metadata from runner
         """
+        # Extract OIDC claims from metadata if available
+        oidc_claims = metadata.get("oidc_claims")
+        verified_account = self.verified_account
+        
+        if oidc_claims:
+            verified_account = oidc_claims.get("sub", self.verified_account)
+        
         event = AuditEvent(
             event_id=self._generate_event_id(),
             timestamp=datetime.utcnow().isoformat(),
@@ -130,12 +139,13 @@ class GlobalInstrumentationPlugin(BasePlugin):
             agent_role=self.agent_role,
             event_type="initialization",
             hook_name="on_agent_start",
-            verified_account=self.verified_account,
+            verified_account=verified_account,
             auth_timestamp=datetime.utcnow().isoformat(),
+            oidc_claims=oidc_claims,
             extra_context=metadata,
         )
         
-        self._log_and_sink(event, "Agent started with verified identity")
+        self._log_and_sink(event, "Agent started with verified OIDC identity")
     
     def on_tool_start(
         self,
@@ -163,6 +173,15 @@ class GlobalInstrumentationPlugin(BasePlugin):
         if invocation_context:
             self._enrich_invocation_context(invocation_context)
         
+        # Extract OIDC claims from invocation context
+        oidc_claims = None
+        verified_account = self.verified_account
+        
+        if invocation_context and hasattr(invocation_context, "custom_data"):
+            oidc_claims = invocation_context.custom_data.get("oidc_claims")
+            if oidc_claims:
+                verified_account = oidc_claims.get("sub", self.verified_account)
+        
         # Detect MCP operations and extract ground truth
         mcp_op, mcp_data = self._extract_mcp_operation(tool_name, tool_input)
         
@@ -173,8 +192,9 @@ class GlobalInstrumentationPlugin(BasePlugin):
             agent_role=self.agent_role,
             event_type="tool_invocation",
             hook_name="on_tool_start",
-            verified_account=self.verified_account,
+            verified_account=verified_account,
             auth_timestamp=datetime.utcnow().isoformat(),
+            oidc_claims=oidc_claims,
             tool_name=tool_name,
             tool_inputs=self._sanitize_for_logging(tool_input),
             mcp_operation=mcp_op,
@@ -211,6 +231,15 @@ class GlobalInstrumentationPlugin(BasePlugin):
             else None
         )
         
+        # Extract OIDC claims from invocation context
+        oidc_claims = None
+        verified_account = self.verified_account
+        
+        if invocation_context and hasattr(invocation_context, "custom_data"):
+            oidc_claims = invocation_context.custom_data.get("oidc_claims")
+            if oidc_claims:
+                verified_account = oidc_claims.get("sub", self.verified_account)
+        
         event = AuditEvent(
             event_id=self._generate_event_id(),
             timestamp=datetime.utcnow().isoformat(),
@@ -218,8 +247,9 @@ class GlobalInstrumentationPlugin(BasePlugin):
             agent_role=self.agent_role,
             event_type="tool_completion",
             hook_name="on_tool_end",
-            verified_account=self.verified_account,
+            verified_account=verified_account,
             auth_timestamp=datetime.utcnow().isoformat(),
+            oidc_claims=oidc_claims,
             tool_name=tool_name,
             tool_outputs=self._sanitize_for_logging(tool_output),
             tool_error=tool_error,
@@ -268,6 +298,7 @@ class GlobalInstrumentationPlugin(BasePlugin):
             hook_name="on_model_end",
             verified_account=self.verified_account,
             auth_timestamp=datetime.utcnow().isoformat(),
+            oidc_claims=None,  # Model events use agent-level identity, not per-request
             model_name=model_name,
             model_input_tokens=usage.get("input_tokens") if usage else None,
             model_output_tokens=usage.get("output_tokens") if usage else None,
@@ -286,12 +317,20 @@ class GlobalInstrumentationPlugin(BasePlugin):
     
     def _enrich_invocation_context(self, context: "InvocationContext") -> None:
         """
-        Inject verified identity into the InvocationContext.
+        Inject verified OIDC identity into the InvocationContext.
         
         This ensures all downstream operations are cryptographically linked
-        to an authenticated service account.
+        to an authenticated service account with OIDC claims.
         """
         if hasattr(context, "custom_data"):
+            # Try to get current OIDC claims if available
+            oidc_claims = getattr(context, "oidc_claims", None)
+            
+            # Inject OIDC identity using auth module
+            if oidc_claims:
+                auth.inject_verified_identity(context.custom_data, oidc_claims)
+            
+            # Fallback to basic agent identity
             context.custom_data["verified_agent_id"] = self.agent_id
             context.custom_data["verified_role"] = self.agent_role
             context.custom_data["verified_account"] = self.verified_account
