@@ -9,7 +9,7 @@ No cloud dependencies - fully local simulation.
 import sqlite3
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pathlib import Path
 from dataclasses import asdict
@@ -77,23 +77,91 @@ class LocalAuditDB:
             CREATE TABLE IF NOT EXISTS kqml_timeline (
                 performative_id TEXT PRIMARY KEY,
                 timestamp TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
                 sender_agent_id TEXT NOT NULL,
-                performer_verb TEXT NOT NULL,
+                receiver_agent_id TEXT NOT NULL,
+                performative_verb TEXT NOT NULL,
                 raw_kqml TEXT NOT NULL,
-                energy_mwh REAL,
-                price_per_mwh REAL,
-                response_performative_id TEXT,
+                
+                -- Core content fields
+                subject TEXT,
+                content TEXT,
+                reason TEXT,
+                
+                -- Grid management context
+                priority TEXT,
+                grid_impact TEXT,
+                affected_components TEXT,  -- JSON array as string
+                
+                -- Legacy energy fields
+                energy_mw REAL,
+                price REAL,
+                
+                -- Command fields
+                command TEXT,
+                params TEXT,  -- JSON object as string
+                
+                -- Custom fields as JSON
+                custom_fields TEXT,
+                
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Add new columns to existing kqml_timeline table if they don't exist
+        new_columns = [
+            ("conversation_id", "TEXT"),
+            ("receiver_agent_id", "TEXT"),
+            ("subject", "TEXT"),
+            ("content", "TEXT"),
+            ("reason", "TEXT"),
+            ("priority", "TEXT"),
+            ("grid_impact", "TEXT"),
+            ("affected_components", "TEXT"),
+            ("energy_mw", "REAL"),
+            ("price", "REAL"),
+            ("command", "TEXT"),
+            ("params", "TEXT"),
+            ("custom_fields", "TEXT")
+        ]
+        
+        for column_name, column_type in new_columns:
+            try:
+                self.conn.execute(f"ALTER TABLE kqml_timeline ADD COLUMN {column_name} {column_type}")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+        
+        # Rename old columns if they exist
+        try:
+            # Check if old column exists
+            cursor = self.conn.execute("PRAGMA table_info(kqml_timeline)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if "performer_verb" in columns and "performative_verb" not in columns:
+                self.conn.execute("ALTER TABLE kqml_timeline RENAME COLUMN performer_verb TO performative_verb")
+            if "energy_mwh" in columns and "energy_mw" not in columns:
+                self.conn.execute("ALTER TABLE kqml_timeline RENAME COLUMN energy_mwh TO energy_mw")
+            if "price_per_mwh" in columns and "price" not in columns:
+                self.conn.execute("ALTER TABLE kqml_timeline RENAME COLUMN price_per_mwh TO price")
+                
+        except sqlite3.OperationalError:
+            # Columns don't exist or already renamed
+            pass
         
         # Create indexes for fast queries
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON audit_events(timestamp)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_id ON audit_events(agent_id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_event_type ON audit_events(event_type)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_verified_account ON audit_events(verified_account)")
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_kqml_perfs_time ON kqml_timeline(timestamp)")
+        
+        # Enhanced KQML timeline indexes
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_kqml_timestamp ON kqml_timeline(timestamp)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_kqml_conversation ON kqml_timeline(conversation_id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_kqml_sender ON kqml_timeline(sender_agent_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_kqml_receiver ON kqml_timeline(receiver_agent_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_kqml_performative ON kqml_timeline(performative_verb)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_kqml_subject ON kqml_timeline(subject)")
         
         self.conn.commit()
     
@@ -172,17 +240,20 @@ class LocalAuditDB:
             True if successful
         """
         try:
+            # Legacy support - convert old parameters to new format
             self.conn.execute("""
-                INSERT INTO kqml_timeline VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO kqml_timeline (
+                    performative_id, timestamp, sender_agent_id, performative_verb, 
+                    raw_kqml, energy_mw, price, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 performative_id,
                 timestamp,
                 sender_agent_id,
                 performative_verb,
                 raw_kqml,
-                energy_mwh,
-                price_per_mwh,
-                None,  # response_performative_id (filled later)
+                energy_mwh,  # Map to energy_mw
+                price_per_mwh,  # Map to price
                 datetime.utcnow().isoformat(),
             ))
             self.conn.commit()
@@ -190,6 +261,127 @@ class LocalAuditDB:
         except Exception as e:
             self.logger.error(f"Error inserting KQML performative: {e}")
             return False
+    
+    def insert_kqml_performative_enhanced(
+        self,
+        performative_id: str,
+        timestamp: str,
+        conversation_id: str,
+        sender_agent_id: str,
+        receiver_agent_id: str,
+        performative_verb: str,
+        raw_kqml: str,
+        subject: Optional[str] = None,
+        content: Optional[str] = None,
+        reason: Optional[str] = None,
+        priority: Optional[str] = None,
+        grid_impact: Optional[str] = None,
+        affected_components: Optional[List[str]] = None,
+        energy_mw: Optional[float] = None,
+        price: Optional[float] = None,
+        command: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+        custom_fields: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Insert enhanced KQML performative for comprehensive grid management timeline.
+        
+        Args:
+            performative_id: Unique ID for this performative
+            timestamp: ISO timestamp
+            conversation_id: Conversation ID linking related messages
+            sender_agent_id: Agent that issued performative
+            receiver_agent_id: Agent receiving the performative
+            performative_verb: propose, accept, reject, inform, query, answer, request
+            raw_kqml: Raw KQML message
+            subject: Subject of the message
+            content: Message content
+            reason: Reason (for reject messages)
+            priority: Priority level (low, medium, high, critical)
+            grid_impact: Grid impact type (stability, efficiency, safety, cost)
+            affected_components: List of affected components
+            energy_mw: Energy in MW (legacy)
+            price: Price (legacy)
+            command: Command name (for request messages)
+            params: Command parameters
+            custom_fields: Custom fields dictionary
+            
+        Returns:
+            True if successful
+        """
+        try:
+            # Serialize complex fields to JSON
+            affected_components_json = json.dumps(affected_components) if affected_components else None
+            params_json = json.dumps(params) if params else None
+            custom_fields_json = json.dumps(custom_fields) if custom_fields else None
+            
+            self.conn.execute("""
+                INSERT INTO kqml_timeline (
+                    performative_id, timestamp, conversation_id, sender_agent_id, 
+                    receiver_agent_id, performative_verb, raw_kqml, subject, content, 
+                    reason, priority, grid_impact, affected_components, energy_mw, 
+                    price, command, params, custom_fields, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                performative_id,
+                timestamp,
+                conversation_id,
+                sender_agent_id,
+                receiver_agent_id,
+                performative_verb,
+                raw_kqml,
+                subject,
+                content,
+                reason,
+                priority,
+                grid_impact,
+                affected_components_json,
+                energy_mw,
+                price,
+                command,
+                params_json,
+                custom_fields_json,
+                datetime.utcnow().isoformat()  # created_at
+            ))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to insert enhanced KQML performative: {e}")
+            return False
+
+    def insert_kqml_from_message(self, kqml_message) -> bool:
+        """
+        Insert KQML performative from a KQMLMessage object.
+        
+        Args:
+            kqml_message: KQMLMessage instance
+            
+        Returns:
+            True if successful
+        """
+        import uuid
+        performative_id = str(uuid.uuid4())
+        
+        return self.insert_kqml_performative_enhanced(
+            performative_id=performative_id,
+            timestamp=kqml_message.timestamp,
+            conversation_id=kqml_message.conversation_id,
+            sender_agent_id=kqml_message.sender_id,
+            receiver_agent_id=kqml_message.receiver_id,
+            performative_verb=kqml_message.performative,
+            raw_kqml=kqml_message.raw_kqml or kqml_message.to_string(),
+            subject=kqml_message.subject,
+            content=kqml_message.content,
+            reason=kqml_message.reason,
+            priority=kqml_message.priority,
+            grid_impact=kqml_message.grid_impact,
+            affected_components=kqml_message.affected_components,
+            energy_mw=kqml_message.energy_mw,
+            price=kqml_message.price,
+            command=kqml_message.command,
+            params=kqml_message.params,
+            custom_fields=kqml_message.custom_fields,
+        )
     
     def query_events(
         self,

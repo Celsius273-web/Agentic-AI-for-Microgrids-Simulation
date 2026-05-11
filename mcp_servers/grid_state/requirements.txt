@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+redis
+requests
+PyJWT[crypto]
+google-auth
+google-generativeai

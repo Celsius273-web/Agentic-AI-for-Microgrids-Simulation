@@ -10,6 +10,7 @@ __pycache__/
 audit_trail.db
 audit_trail.db-shm
 audit_trail.db-wal
-PHASE_1_TESTING_GUIDE.md
+old_md_files/
 # local scratch
 test.py
+test_kqml_mcp_integration.py

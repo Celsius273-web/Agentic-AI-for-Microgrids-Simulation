@@ -229,6 +229,35 @@ services:
   #     - microgrid-net
   #   restart: unless-stopped
 
+  mcp-grid-state:
+    build:
+      context: .
+      dockerfile: ./mcp_servers/grid_state/Dockerfile
+    container_name: mcp-grid-state
+    environment:
+      - AGENT_ID=mcp-grid-state
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # OIDC Configuration - switch between local Keycloak and Google Cloud
+      - OIDC_ISSUER=${OIDC_ISSUER:-http://keycloak:8080/realms/microgrid}
+      - OIDC_AUDIENCE=${OIDC_AUDIENCE:-microgrid-agents}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+      - AUTH_MODE=${AUTH_MODE:-local}  # local (Keycloak) or cloud (Google)
+      - PORT=8000
+    ports:
+      - "8010:8000"
+    depends_on:
+      - redis
+      - keycloak
+    networks:
+      - microgrid-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 networks:
   microgrid-net:
     driver: bridge

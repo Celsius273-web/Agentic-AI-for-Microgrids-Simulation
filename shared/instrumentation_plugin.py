@@ -13,7 +13,7 @@ Uses official google-adk BasePlugin. Events stored in local SQLite DB.
 
 import time
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from datetime import datetime
 from dataclasses import dataclass, field
 
@@ -286,8 +286,12 @@ class GlobalInstrumentationPlugin(BasePlugin):
             model_output: Raw output from model
             usage: Token usage information
         """
-        # Extract KQML performative from model output
-        kqml_perf, kqml_raw = self._extract_kqml_performative(model_output)
+        # Extract KQML performatives from model output (enhanced)
+        kqml_messages = self._extract_kqml_messages(model_output)
+        
+        # Use first detected KQML for event record (backward compatibility)
+        kqml_perf = kqml_messages[0]["performative"] if kqml_messages else "unclassified"
+        kqml_raw = kqml_messages[0]["raw_kqml"] if kqml_messages else ""
         
         event = AuditEvent(
             event_id=self._generate_event_id(),
@@ -307,13 +311,18 @@ class GlobalInstrumentationPlugin(BasePlugin):
             request_id=self._current_request_id,
             extra_context={
                 "total_tokens": usage.get("total_tokens") if usage else None,
+                "kqml_count": len(kqml_messages),
             },
         )
         
-        self._log_and_sink(
-            event,
-            f"Model inference complete: {model_name} (performative: {kqml_perf})"
-        )
+        if kqml_messages:
+            self._log_and_sink(event, f"Model output with {len(kqml_messages)} KQML message(s): {kqml_perf}")
+            
+            # Store all KQML messages in timeline
+            for kqml_msg in kqml_messages:
+                self._store_kqml_in_timeline(kqml_msg)
+        else:
+            self._log_and_sink(event, f"Model inference complete: {model_name} (no KQML detected)")
     
     def _enrich_invocation_context(self, context: "InvocationContext") -> None:
         """
@@ -340,69 +349,184 @@ class GlobalInstrumentationPlugin(BasePlugin):
     ) -> tuple:
         """
         Detect MCP operations and extract ground-truth data.
+        Enhanced to capture comprehensive grid management operations.
         
         Returns:
             (operation_name, extracted_data)
         """
         mcp_data = {}
         
-        # Detect MCP retrieval operations
+        # Primary MCP Grid State Server operations
         if "retrieve_grid_state" in tool_name.lower():
-            mcp_data["grid_state"] = tool_input.get("grid_state")
+            # This is the main MCP operation - capture full grid state
+            mcp_data["grid_state"] = tool_input.get("grid_state", {})
+            mcp_data["mcp_server"] = "mcp-grid-state"
+            mcp_data["operation_type"] = "ground_truth_retrieval"
             return "retrieve_grid_state", mcp_data
         
+        # Agent-to-agent communications (KQML over HTTPS)
+        elif any(agent in tool_name.lower() for agent in ["solar_agent_access", "wind_agent_access", 
+                                                          "battery_agent_access", "load_agent_access"]):
+            # Extract agent communication context
+            agent_type = None
+            for agent in ["solar", "wind", "battery", "load"]:
+                if agent in tool_name.lower():
+                    agent_type = agent
+                    break
+            
+            mcp_data["agent_communication"] = {
+                "target_agent": agent_type,
+                "command": tool_input.get("command", "unknown"),
+                "params": tool_input.get("params", {}),
+                "conversation_id": tool_input.get("conversation_id")
+            }
+            mcp_data["operation_type"] = "agent_communication"
+            return f"{agent_type}_agent_communication", mcp_data
+        
+        # Grid management communication functions
+        elif any(comm_type in tool_name.lower() for comm_type in ["send_grid_alert", "request_research_analysis", "propose_grid_action"]):
+            comm_type = None
+            if "alert" in tool_name.lower():
+                comm_type = "grid_alert"
+            elif "research" in tool_name.lower():
+                comm_type = "research_request"
+            elif "propose" in tool_name.lower():
+                comm_type = "grid_proposal"
+            
+            mcp_data["grid_communication"] = {
+                "type": comm_type,
+                "receiver": tool_input.get("receiver_id", "unknown"),
+                "subject": tool_input.get("subject", ""),
+                "priority": tool_input.get("priority", "medium"),
+                "grid_impact": tool_input.get("grid_impact", "unknown"),
+                "affected_components": tool_input.get("affected_components", [])
+            }
+            mcp_data["operation_type"] = "grid_communication"
+            return comm_type, mcp_data
+        
+        # Legacy pricing operations (if implemented)
         elif "retrieve_pricing" in tool_name.lower():
-            mcp_data["pricing_data"] = tool_input.get("pricing_data")
+            mcp_data["pricing_data"] = tool_input.get("pricing_data", {})
+            mcp_data["mcp_server"] = "mcp-pricing"
+            mcp_data["operation_type"] = "pricing_retrieval"
             return "retrieve_pricing", mcp_data
         
-        elif "wind_agent_access" in tool_name.lower():
-            mcp_data["grid_state"] = tool_input.get("grid_state")
-            return "retrieve_wind_forecast", mcp_data
-        
-        elif "solar_agent_access" in tool_name.lower():
-            mcp_data["grid_state"] = tool_input.get("grid_state")
-            return "retrieve_solar_forecast", mcp_data
-        
-        elif "battery_agent_access" in tool_name.lower():
-            mcp_data["grid_state"] = tool_input.get("grid_state")
-            return "retrieve_battery_status", mcp_data
-        
-        elif "load_agent_access" in tool_name.lower():
-            mcp_data["grid_state"] = tool_input.get("grid_state")
-            return "retrieve_load_forecast", mcp_data
-        
         else:
-            return "unknown_operation", mcp_data
+            # Capture any other tool operations for completeness
+            mcp_data["tool_context"] = {
+                "tool_name": tool_name,
+                "input_keys": list(tool_input.keys()) if tool_input else [],
+                "has_conversation_id": "conversation_id" in tool_input if tool_input else False
+            }
+            mcp_data["operation_type"] = "other_tool"
+            return "other_operation", mcp_data
     
-    def _extract_kqml_performative(self, model_output: Dict[str, Any]) -> tuple:
+    def _extract_kqml_messages(self, model_output: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Extract KQML performative verb from model output.
+        Extract comprehensive KQML messages from model output.
         
-        KQML performatives in energy negotiation:
-        - propose: Offer a control action or negotiation
-        - accept: Accept a proposal from another agent
-        - reject: Decline a proposal
-        - inform: Provide information without negotiation
-        - request: Ask another agent to perform action
+        Looks for structured KQML messages in parenthetical format and
+        extracts all performatives with their details.
         
         Returns:
-            (performative_verb, raw_kqml_string)
+            List of dicts containing KQML message details
         """
+        import re
+        from . import kqml
+        
         text = ""
         if isinstance(model_output, dict):
-            # Try content field first (standard GenAI response)
             text = model_output.get("content", "")
         elif isinstance(model_output, str):
             text = model_output
         
-        text_lower = text.lower()
+        kqml_messages = []
         
-        performatives = ["propose", "accept", "reject", "inform", "request", "tell"]
-        for perf in performatives:
-            if perf in text_lower:
-                return perf, text
+        # Look for KQML messages in parenthetical format
+        kqml_pattern = r'\([^)]+\)'
+        matches = re.findall(kqml_pattern, text)
         
-        return "unclassified", text
+        for match in matches:
+            try:
+                # Try to parse as KQML
+                kqml_msg = kqml.parse_kqml(match)
+                kqml_messages.append({
+                    "performative": kqml_msg.performative,
+                    "raw_kqml": match,
+                    "sender_id": kqml_msg.sender_id,
+                    "receiver_id": kqml_msg.receiver_id,
+                    "conversation_id": kqml_msg.conversation_id,
+                    "subject": kqml_msg.subject,
+                    "content": kqml_msg.content,
+                    "priority": kqml_msg.priority,
+                    "grid_impact": kqml_msg.grid_impact,
+                    "affected_components": kqml_msg.affected_components,
+                })
+            except:
+                # Not valid KQML, skip
+                continue
+        
+        # Fallback: look for performative keywords if no structured KQML found
+        if not kqml_messages:
+            text_lower = text.lower()
+            performatives = ["propose", "accept", "reject", "inform", "query", "answer", "request"]
+            
+            for perf in performatives:
+                if perf in text_lower:
+                    kqml_messages.append({
+                        "performative": perf,
+                        "raw_kqml": text,
+                        "sender_id": self.agent_id,
+                        "receiver_id": "unknown",
+                        "conversation_id": "generated",
+                        "subject": None,
+                        "content": text,
+                        "priority": None,
+                        "grid_impact": None,
+                        "affected_components": None,
+                    })
+                    break
+        
+        return kqml_messages
+    
+    def _store_kqml_in_timeline(self, kqml_data: Dict[str, Any]) -> None:
+        """
+        Store KQML message in the audit timeline.
+        
+        Args:
+            kqml_data: Dict containing KQML message data
+        """
+        try:
+            self.audit_db.insert_kqml_performative_enhanced(
+                performative_id=self._generate_event_id(),
+                timestamp=datetime.utcnow().isoformat(),
+                conversation_id=kqml_data.get("conversation_id", "unknown"),
+                sender_agent_id=kqml_data.get("sender_id", self.agent_id),
+                receiver_agent_id=kqml_data.get("receiver_id", "unknown"),
+                performative_verb=kqml_data.get("performative", "unknown"),
+                raw_kqml=kqml_data.get("raw_kqml", ""),
+                subject=kqml_data.get("subject"),
+                content=kqml_data.get("content"),
+                priority=kqml_data.get("priority"),
+                grid_impact=kqml_data.get("grid_impact"),
+                affected_components=kqml_data.get("affected_components"),
+            )
+        except Exception as e:
+            # Log error but don't fail the entire instrumentation
+            print(f"Warning: Failed to store KQML in timeline: {e}")
+    
+    def _extract_kqml_performative(self, model_output: Dict[str, Any]) -> tuple:
+        """
+        Legacy method for backward compatibility.
+        Extract KQML performative verb from model output.
+        
+        Returns:
+            (performative_verb, raw_kqml_string)
+        """
+        messages = self._extract_kqml_messages(model_output)
+        if messages:
+            return messages[0]["performative"], messages[0]["raw_kqml"]
+        return "unclassified", ""
     
     def _sanitize_for_logging(self, data: Any) -> Any:
         """
