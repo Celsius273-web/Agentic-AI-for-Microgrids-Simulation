@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""
-MCP Grid State Server
-====================
-
-Stateless FastAPI server that provides real-time microgrid state data.
-Reads from Redis key "grid:state" and returns structured JSON.
-
-Features:
-- Single Redis key access - no aggregation or database
-- HTTPS with mTLS + OIDC authentication  
-- Comprehensive error handling
-- Health check endpoint
-"""
 
 import os
 import sys

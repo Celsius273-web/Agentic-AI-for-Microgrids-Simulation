@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Setup script for the Microgrid Chat UI and RAG system.
-Initializes the RAG knowledge base and verifies system components.
-"""
-
 import os
 import sys
 from shared.rag import initialize_rag_system, search_knowledge_base

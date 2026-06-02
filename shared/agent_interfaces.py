@@ -9,17 +9,7 @@ from . import kqml
 
 
 def retrieve_grid_state(tool_context: Any) -> Dict[str, Any]:
-    """
-    Retrieve current microgrid operational state from MCP Grid State Server.
-    
-    This provides ground truth grid data for agent decision-making.
-    
-    Args:
-        tool_context: Tool invocation context
-        
-    Returns:
-        Dict containing grid state data or error information
-    """
+
     try:
         token = auth.get_service_account_token()
         url = f"https://mcp-grid-state:{config.MTLS_SERVER_PORT}/retrieve_grid_state"

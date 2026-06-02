@@ -16,7 +16,6 @@ from shared.config import (
 
 
 def build_agent_app(agent_id: str) -> FastAPI:
-    """Build a minimal API surface used in Phase 1 tests."""
     app = FastAPI(title=f"{agent_id}-server")
 
     @app.get("/health")
@@ -40,7 +39,6 @@ def build_agent_app(agent_id: str) -> FastAPI:
 
 
 def run_agent_server(agent_id: Optional[str] = None) -> None:
-    """Run the FastAPI service with required mTLS settings."""
     resolved_agent_id = agent_id or AGENT_ID or "unknown-agent"
     app = build_agent_app(resolved_agent_id)
 

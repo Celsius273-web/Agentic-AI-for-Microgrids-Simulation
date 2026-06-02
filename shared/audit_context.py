@@ -1,5 +1,3 @@
-"""Per-invocation context for audit correlation (chat, HTTP, container)."""
-
 from __future__ import annotations
 
 import contextvars
@@ -18,12 +16,6 @@ def begin_audit_invocation(
     oidc_claims: Optional[Dict[str, Any]] = None,
     request_id: Optional[str] = None,
 ) -> str:
-    """
-    Bind audit metadata for the current async/thread context.
-
-    Returns:
-        request_id used for audit_events.request_id
-    """
     rid = request_id or str(uuid.uuid4())
     _audit_context.set(
         {
