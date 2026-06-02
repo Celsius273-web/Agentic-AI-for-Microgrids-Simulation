@@ -1,9 +1,8 @@
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
-from google.adk.plugins.logging_plugin import LoggingPlugin
-
-from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config
+from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config, AGENT_ID, AGENT_ROLE, VERIFIED_ACCOUNT
+from shared.runner_plugins import build_adk_plugins
 from shared.agent_interfaces import RAG_access
 from shared.agent_server import run_agent_server
 
@@ -37,5 +36,11 @@ You provide raw, unbiased information. The Control Agent and Microgrid Agent mak
 )
 
 if __name__ == "__main__":
-    InMemoryRunner(agent=researcher_agent, plugins=[LoggingPlugin()])
+    plugins = build_adk_plugins(
+        agent_id=AGENT_ID or "researcher-agent",
+        agent_role=AGENT_ROLE or "researcher",
+        verified_account=VERIFIED_ACCOUNT or "researcher-agent@microgrid.local",
+        enable_console_audit=True,
+    )
+    InMemoryRunner(agent=researcher_agent, plugins=plugins)
     run_agent_server()

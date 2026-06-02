@@ -39,11 +39,14 @@ services:
       - ./microgrid_agent.py:/app/microgrid_agent.py
       - ./shared:/app/shared
       - ./shared/certs:/app/shared/certs:ro
+      - ./audit_trail.db:/app/audit_trail.db
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - AGENT_FILE=microgrid_agent.py
       - AGENT_ID=microgrid-agent
       - AGENT_ROLE=control
+      - AUDIT_DB_PATH=/app/audit_trail.db
+      - ENABLE_LOCAL_INSTRUMENTATION=true
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - CERTS_DIR=/app/shared/certs
@@ -150,11 +153,14 @@ services:
       - ./research_agent.py:/app/research_agent.py
       - ./shared:/app/shared
       - ./shared/certs:/app/shared/certs:ro
+      - ./audit_trail.db:/app/audit_trail.db
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - AGENT_FILE=research_agent.py
       - AGENT_ID=researcher-agent
       - AGENT_ROLE=researcher
+      - AUDIT_DB_PATH=/app/audit_trail.db
+      - ENABLE_LOCAL_INSTRUMENTATION=true
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - CERTS_DIR=/app/shared/certs

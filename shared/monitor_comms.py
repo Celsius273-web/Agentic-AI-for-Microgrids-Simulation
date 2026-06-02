@@ -45,8 +45,8 @@ def deliver_kqml_inform(
         )
 
         try:
-            from shared.local_audit_db import LocalAuditDB
-            db = LocalAuditDB(config.AUDIT_DB_PATH)
+            from shared.local_audit_db import get_shared_audit_db
+            db = get_shared_audit_db(config.AUDIT_DB_PATH)
             db.insert_kqml_performative_enhanced(
                 performative_id=str(uuid.uuid4()),
                 timestamp=datetime.now(timezone.utc).isoformat(),

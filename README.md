@@ -38,7 +38,7 @@ python3 demo_chat_simple.py
 cd microgrid_ui && npm install && npm start
 ```
 
-Open http://localhost:3000. The UI talks to the API on port 8001. Select **Monitor Agent** for oversight chat; `GET /alerts` lists open operator alerts.
+Open http://localhost:3000. The UI posts to `http://localhost:8002/chat` (run `python3 chat_server.py`). Select **Monitor Agent** for oversight; `GET /alerts` lists operator alerts. Docker **control-agent** uses host port **8001** — do not run chat on 8001 while Compose is up.
 
 ## Full stack (Docker)
 
@@ -61,10 +61,23 @@ python3 chat_server.py
 
 Copy `.env.example` to `.env`. Required variable: `GEMINI_API_KEY`. See the example file for Keycloak vs Google Cloud auth options.
 
+## Audit / instrumentation (SQLite)
+
+All ADK agents use `LoggingPlugin` plus `GlobalInstrumentationPlugin` when `ENABLE_LOCAL_INSTRUMENTATION=true` (default in Docker). Events are written to `audit_trail.db` (shared volume across agents).
+
+- **Container agents:** set `AUDIT_DB_PATH=/app/audit_trail.db` in `docker-compose.yml`
+- **Chat server:** same DB path on the host; each `/chat` call sets `request_id` for correlation
+- **Console audit lines:** `enable_console_audit=True` only in agent `__main__` (not chat)
+
+```bash
+python3 tests/test_instrumentation_plugin.py
+```
+
 ## Tests
 
 ```bash
 python3 tests/test_structure.py
+python3 tests/test_instrumentation_plugin.py
 ```
 
 Integration tests that need a running Docker stack are kept local-only (see `.gitignore`).

@@ -2,504 +2,419 @@
 Global Instrumentation Plugin for Google ADK
 ============================================
 
-Implements comprehensive lifecycle hook interception for the agent swarm.
-- on_agent_start: Records agent initialization and verified identity
-- on_tool_start: Captures MCP inputs (ground truth audit trail)
-- on_tool_end: Records tool outputs and side effects
-- on_model_end: Archives raw KQML performatives and model outputs
-
-Uses official google-adk BasePlugin. Events stored in local SQLite DB.
+Implements ADK BasePlugin callbacks and persists lifecycle events to SQLite
+(audit_trail.db). Designed for shared use across Docker agents and chat_server.
 """
 
-import time
+from __future__ import annotations
+
 import json
-from typing import Any, Dict, Optional, List
-from datetime import datetime
+import re
+import time
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from typing_extensions import override
 
 try:
-    from google.adk.plugins.base import BasePlugin
-    from google.adk.runners import InvocationContext
-except ImportError:
+    from google.adk.plugins.base_plugin import BasePlugin
+    from google.adk.agents.base_agent import BaseAgent
+    from google.adk.agents.callback_context import CallbackContext
+    from google.adk.agents.invocation_context import InvocationContext
+    from google.adk.events.event import Event
+    from google.adk.models.llm_request import LlmRequest
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.tools.base_tool import BaseTool
+    from google.adk.tools.tool_context import ToolContext
+    from google.genai import types
+except ImportError as exc:
     raise ImportError(
         "google-adk is required. Install with: pip install google-adk"
-    )
+    ) from exc
 
-from shared.local_audit_db import LocalAuditDB
-from shared import auth
+from shared.audit_context import get_audit_context
+from shared.local_audit_db import get_shared_audit_db
+
+MODEL_OUTPUT_MAX_CHARS = 4000
 
 
 @dataclass
 class AuditEvent:
     """Immutable audit event structure for all lifecycle hooks."""
+
     event_id: str
     timestamp: str
     agent_id: str
     agent_role: str
-    event_type: str  # agent_start, tool_start, tool_end, model_end
+    event_type: str
     hook_name: str
-    
-    # Identity and authentication
     verified_account: str
     auth_timestamp: str
-    oidc_claims: Optional[Dict[str, Any]] = None  # Full OIDC token claims for compliance
-    
-    # Tool invocation context (for tool_start, tool_end, model_end)
+    oidc_claims: Optional[Dict[str, Any]] = None
     tool_name: Optional[str] = None
     tool_inputs: Optional[Dict[str, Any]] = None
     tool_outputs: Optional[Dict[str, Any]] = None
     tool_error: Optional[str] = None
     tool_execution_ms: Optional[float] = None
-    
-    # MCP/KQML context
     mcp_operation: Optional[str] = None
     kqml_performative: Optional[str] = None
     kqml_raw: Optional[str] = None
-    kqml_metadata: Optional[Dict[str, Any]] = None
-    
-    # Model inference context
     model_name: Optional[str] = None
     model_input_tokens: Optional[int] = None
     model_output_tokens: Optional[int] = None
-    model_reasoning: Optional[str] = None
-    
-    # Grid state snapshot (for decision audit trail)
     grid_state_snapshot: Optional[Dict[str, Any]] = None
     pricing_data_snapshot: Optional[Dict[str, Any]] = None
-    
-    # Compliance and lineage
     request_id: Optional[str] = None
     parent_event_id: Optional[str] = None
-    
     extra_context: Dict[str, Any] = field(default_factory=dict)
 
 
 class GlobalInstrumentationPlugin(BasePlugin):
     """
-    Official Google ADK BasePlugin for global lifecycle hook interception.
-    
-    Stores all events in local SQLite database for simulation.
-    
-    Registration example:
-        plugin = GlobalInstrumentationPlugin(agent_id="solar-agent", db_path="audit_trail.db")
-        runner = InMemoryRunner()
-        runner.register_plugin(plugin)
+    ADK plugin that sinks agent lifecycle events to local SQLite.
+
+    Registers hooks: before_run, before/after_tool, after_model, after_run, errors.
     """
-    
+
     def __init__(
         self,
         agent_id: str,
         agent_role: str = "control",
-        verified_account: str = None,
+        verified_account: Optional[str] = None,
         db_path: str = "audit_trail.db",
-        enable_local_logging: bool = True,
+        enable_local_logging: bool = False,
     ):
-        """
-        Initialize the global instrumentation plugin.
-        
-        Args:
-            agent_id: Unique identifier for this agent (from AGENT_ID env var)
-            agent_role: Role of agent (control, researcher, solar, wind, battery, load)
-            verified_account: Authenticated service account (from JWT/OIDC)
-            db_path: Path to SQLite database file
-            enable_local_logging: Also log to stdout for debugging
-        """
-        super().__init__()
+        super().__init__(name="global_instrumentation")
         self.agent_id = agent_id
         self.agent_role = agent_role
-        self.verified_account = verified_account or "unauthenticated"
+        self.default_verified_account = verified_account or "unauthenticated"
         self.enable_local_logging = enable_local_logging
-        
-        # Initialize local SQLite audit database
-        self.audit_db = LocalAuditDB(db_path=db_path)
-        
-        # Request ID tracking for correlation
-        self._current_request_id = None
-        self._tool_start_time = None
-    
-    def on_agent_start(self, agent_id: str, metadata: Dict[str, Any]) -> None:
-        """
-        Hook: Agent initialization. Record verified OIDC identity and startup context.
-        
-        Args:
-            agent_id: Agent identifier from runner
-            metadata: Agent metadata from runner
-        """
-        # Extract OIDC claims from metadata if available
-        oidc_claims = metadata.get("oidc_claims")
-        verified_account = self.verified_account
-        
-        if oidc_claims:
-            verified_account = oidc_claims.get("sub", self.verified_account)
-        
-        event = AuditEvent(
-            event_id=self._generate_event_id(),
-            timestamp=datetime.utcnow().isoformat(),
-            agent_id=self.agent_id,
-            agent_role=self.agent_role,
-            event_type="initialization",
-            hook_name="on_agent_start",
-            verified_account=verified_account,
-            auth_timestamp=datetime.utcnow().isoformat(),
-            oidc_claims=oidc_claims,
-            extra_context=metadata,
-        )
-        
-        self._log_and_sink(event, "Agent started with verified OIDC identity")
-    
-    def on_tool_start(
+        self.audit_db = get_shared_audit_db(db_path)
+        self._tool_start_times: Dict[str, float] = {}
+
+    def _utc_now(self) -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _resolve_identity(self) -> tuple[str, Optional[Dict[str, Any]]]:
+        ctx = get_audit_context()
+        oidc = ctx.get("oidc_claims")
+        account = self.default_verified_account
+        if oidc:
+            account = oidc.get("sub") or oidc.get("preferred_username") or account
+        return account, oidc
+
+    def _request_id(self, invocation_context: Optional[InvocationContext] = None) -> Optional[str]:
+        ctx = get_audit_context()
+        if ctx.get("request_id"):
+            return ctx["request_id"]
+        if invocation_context is not None:
+            return getattr(invocation_context, "invocation_id", None)
+        return None
+
+    def _sink(self, event: AuditEvent, message: str) -> None:
+        if self.enable_local_logging:
+            print(
+                f"[AUDIT:{event.event_type}] {message} | "
+                f"agent={event.agent_id} request={event.request_id}"
+            )
+        self.audit_db.insert_event(event)
+
+    def _build_event(
         self,
-        tool_name: str,
-        tool_input: Dict[str, Any],
-        invocation_context: "InvocationContext" = None,
-    ) -> None:
-        """
-        Hook: Tool invocation started. Capture ground-truth MCP inputs.
-        
-        This is the critical audit point for capturing:
-        - Exact grid state retrieved via MCP
-        - Pricing data inputs
-        - Which agent made the request
-        - Timestamp and identity verification
-        
-        Args:
-            tool_name: Name of the tool being invoked
-            tool_input: Raw input parameters
-            invocation_context: ADK InvocationContext with agent metadata
-        """
-        self._tool_start_time = time.time()
-        
-        # Inject identity into context if available
-        if invocation_context:
-            self._enrich_invocation_context(invocation_context)
-        
-        # Extract OIDC claims from invocation context
-        oidc_claims = None
-        verified_account = self.verified_account
-        
-        if invocation_context and hasattr(invocation_context, "custom_data"):
-            oidc_claims = invocation_context.custom_data.get("oidc_claims")
-            if oidc_claims:
-                verified_account = oidc_claims.get("sub", self.verified_account)
-        
-        # Detect MCP operations and extract ground truth
-        mcp_op, mcp_data = self._extract_mcp_operation(tool_name, tool_input)
-        
-        event = AuditEvent(
-            event_id=self._generate_event_id(),
-            timestamp=datetime.utcnow().isoformat(),
+        *,
+        event_type: str,
+        hook_name: str,
+        invocation_context: Optional[InvocationContext] = None,
+        **fields: Any,
+    ) -> AuditEvent:
+        account, oidc = self._resolve_identity()
+        extra = fields.pop("extra_context", {}) or {}
+        if invocation_context is not None:
+            extra.setdefault("invocation_id", getattr(invocation_context, "invocation_id", None))
+            extra.setdefault("session_id", getattr(getattr(invocation_context, "session", None), "id", None))
+        ctx = get_audit_context()
+        if ctx.get("source"):
+            extra.setdefault("source", ctx["source"])
+
+        return AuditEvent(
+            event_id=str(uuid.uuid4()),
+            timestamp=self._utc_now(),
             agent_id=self.agent_id,
             agent_role=self.agent_role,
+            event_type=event_type,
+            hook_name=hook_name,
+            verified_account=account,
+            auth_timestamp=self._utc_now(),
+            oidc_claims=oidc,
+            request_id=self._request_id(invocation_context),
+            extra_context=extra,
+            **fields,
+        )
+
+    @override
+    async def before_run_callback(
+        self, *, invocation_context: InvocationContext
+    ) -> Optional[types.Content]:
+        event = self._build_event(
+            event_type="invocation_start",
+            hook_name="before_run_callback",
+            invocation_context=invocation_context,
+        )
+        self._sink(event, "Invocation started")
+        return None
+
+    @override
+    async def after_run_callback(self, *, invocation_context: InvocationContext) -> None:
+        event = self._build_event(
+            event_type="invocation_complete",
+            hook_name="after_run_callback",
+            invocation_context=invocation_context,
+        )
+        self._sink(event, "Invocation completed")
+
+    @override
+    async def before_tool_callback(
+        self,
+        *,
+        tool: BaseTool,
+        tool_args: dict[str, Any],
+        tool_context: ToolContext,
+    ) -> Optional[dict]:
+        tool_key = f"{tool.name}:{tool_context.function_call_id}"
+        self._tool_start_times[tool_key] = time.time()
+        mcp_op, mcp_data = self._extract_mcp_operation(tool.name, tool_args or {})
+        event = self._build_event(
             event_type="tool_invocation",
-            hook_name="on_tool_start",
-            verified_account=verified_account,
-            auth_timestamp=datetime.utcnow().isoformat(),
-            oidc_claims=oidc_claims,
-            tool_name=tool_name,
-            tool_inputs=self._sanitize_for_logging(tool_input),
+            hook_name="before_tool_callback",
+            tool_name=tool.name,
+            tool_inputs=self._sanitize_for_logging(tool_args),
             mcp_operation=mcp_op,
             grid_state_snapshot=mcp_data.get("grid_state"),
             pricing_data_snapshot=mcp_data.get("pricing_data"),
-            request_id=self._current_request_id,
             extra_context={
-                "context_agent_id": invocation_context.agent_id if invocation_context else None,
-                "invocation_id": id(invocation_context),
+                "mcp_data": mcp_data,
+                "callback_agent": tool_context.agent_name,
             },
         )
-        
-        self._log_and_sink(event, f"Tool started: {tool_name} (MCP: {mcp_op})")
-    
-    def on_tool_end(
+        self._sink(event, f"Tool start: {tool.name}")
+        return None
+
+    @override
+    async def after_tool_callback(
         self,
-        tool_name: str,
-        tool_output: Dict[str, Any],
-        tool_error: Optional[str] = None,
-        invocation_context: "InvocationContext" = None,
-    ) -> None:
-        """
-        Hook: Tool execution completed. Record outputs and side effects.
-        
-        Args:
-            tool_name: Name of the tool that executed
-            tool_output: Output/result from the tool
-            tool_error: Error message if tool failed
-            invocation_context: ADK InvocationContext
-        """
-        execution_time_ms = (
-            (time.time() - self._tool_start_time) * 1000
-            if self._tool_start_time
-            else None
-        )
-        
-        # Extract OIDC claims from invocation context
-        oidc_claims = None
-        verified_account = self.verified_account
-        
-        if invocation_context and hasattr(invocation_context, "custom_data"):
-            oidc_claims = invocation_context.custom_data.get("oidc_claims")
-            if oidc_claims:
-                verified_account = oidc_claims.get("sub", self.verified_account)
-        
-        event = AuditEvent(
-            event_id=self._generate_event_id(),
-            timestamp=datetime.utcnow().isoformat(),
-            agent_id=self.agent_id,
-            agent_role=self.agent_role,
+        *,
+        tool: BaseTool,
+        tool_args: dict[str, Any],
+        tool_context: ToolContext,
+        result: dict,
+    ) -> Optional[dict]:
+        tool_key = f"{tool.name}:{tool_context.function_call_id}"
+        started = self._tool_start_times.pop(tool_key, None)
+        elapsed_ms = (time.time() - started) * 1000 if started else None
+        event = self._build_event(
             event_type="tool_completion",
-            hook_name="on_tool_end",
-            verified_account=verified_account,
-            auth_timestamp=datetime.utcnow().isoformat(),
-            oidc_claims=oidc_claims,
-            tool_name=tool_name,
-            tool_outputs=self._sanitize_for_logging(tool_output),
-            tool_error=tool_error,
-            tool_execution_ms=execution_time_ms,
-            request_id=self._current_request_id,
+            hook_name="after_tool_callback",
+            tool_name=tool.name,
+            tool_inputs=self._sanitize_for_logging(tool_args),
+            tool_outputs=self._sanitize_for_logging(self._normalize_tool_result(result)),
+            tool_execution_ms=elapsed_ms,
         )
-        
-        if tool_error:
-            self._log_and_sink(event, f"Tool error: {tool_name} - {tool_error}")
-        else:
-            self._log_and_sink(event, f"Tool completed: {tool_name} ({execution_time_ms:.1f}ms)")
-        
-        self._tool_start_time = None
-    
-    def on_model_end(
+        self._sink(event, f"Tool complete: {tool.name}")
+        return None
+
+    @override
+    async def on_tool_error_callback(
         self,
-        model_name: str,
-        model_input: Dict[str, Any],
-        model_output: Dict[str, Any],
-        usage: Dict[str, Any] = None,
-    ) -> None:
-        """
-        Hook: Model inference completed. Record performatives and reasoning.
-        
-        This captures:
-        - Raw KQML performatives (propose, accept, reject, inform)
-        - Model output and reasoning
-        - Token usage for cost tracking
-        - Create non-repudiable timeline of negotiations
-        
-        Args:
-            model_name: Name of the model (e.g., gemini-2.5-flash-lite)
-            model_input: Input prompt/context to the model
-            model_output: Raw output from model
-            usage: Token usage information
-        """
-        # Extract KQML performatives from model output (enhanced)
+        *,
+        tool: BaseTool,
+        tool_args: dict[str, Any],
+        tool_context: ToolContext,
+        error: Exception,
+    ) -> Optional[dict]:
+        tool_key = f"{tool.name}:{tool_context.function_call_id}"
+        started = self._tool_start_times.pop(tool_key, None)
+        elapsed_ms = (time.time() - started) * 1000 if started else None
+        event = self._build_event(
+            event_type="tool_error",
+            hook_name="on_tool_error_callback",
+            tool_name=tool.name,
+            tool_inputs=self._sanitize_for_logging(tool_args),
+            tool_error=str(error),
+            tool_execution_ms=elapsed_ms,
+        )
+        self._sink(event, f"Tool error: {tool.name}")
+        return None
+
+    @override
+    async def after_model_callback(
+        self, *, callback_context: CallbackContext, llm_response: LlmResponse
+    ) -> Optional[LlmResponse]:
+        text = self._truncate(self._llm_content_to_text(llm_response.content))
+        usage = self._usage_dict(llm_response)
+        model_output = {"content": text, "error_code": llm_response.error_code}
         kqml_messages = self._extract_kqml_messages(model_output)
-        
-        # Use first detected KQML for event record (backward compatibility)
         kqml_perf = kqml_messages[0]["performative"] if kqml_messages else "unclassified"
-        kqml_raw = kqml_messages[0]["raw_kqml"] if kqml_messages else ""
-        
-        event = AuditEvent(
-            event_id=self._generate_event_id(),
-            timestamp=datetime.utcnow().isoformat(),
-            agent_id=self.agent_id,
-            agent_role=self.agent_role,
+        kqml_raw = self._truncate(kqml_messages[0]["raw_kqml"]) if kqml_messages else ""
+
+        event = self._build_event(
             event_type="model_inference",
-            hook_name="on_model_end",
-            verified_account=self.verified_account,
-            auth_timestamp=datetime.utcnow().isoformat(),
-            oidc_claims=None,  # Model events use agent-level identity, not per-request
-            model_name=model_name,
-            model_input_tokens=usage.get("input_tokens") if usage else None,
-            model_output_tokens=usage.get("output_tokens") if usage else None,
+            hook_name="after_model_callback",
+            model_name=llm_response.model_version,
+            model_input_tokens=usage.get("input_tokens"),
+            model_output_tokens=usage.get("output_tokens"),
             kqml_performative=kqml_perf,
             kqml_raw=kqml_raw,
-            request_id=self._current_request_id,
             extra_context={
-                "total_tokens": usage.get("total_tokens") if usage else None,
+                "callback_agent": callback_context.agent_name,
+                "partial": llm_response.partial,
+                "content_length": len(text),
                 "kqml_count": len(kqml_messages),
             },
         )
-        
-        if kqml_messages:
-            self._log_and_sink(event, f"Model output with {len(kqml_messages)} KQML message(s): {kqml_perf}")
-            
-            # Store all KQML messages in timeline
-            for kqml_msg in kqml_messages:
-                self._store_kqml_in_timeline(kqml_msg)
-        else:
-            self._log_and_sink(event, f"Model inference complete: {model_name} (no KQML detected)")
-    
-    def _enrich_invocation_context(self, context: "InvocationContext") -> None:
-        """
-        Inject verified OIDC identity into the InvocationContext.
-        
-        This ensures all downstream operations are cryptographically linked
-        to an authenticated service account with OIDC claims.
-        """
-        if hasattr(context, "custom_data"):
-            # Try to get current OIDC claims if available
-            oidc_claims = getattr(context, "oidc_claims", None)
-            
-            # Inject OIDC identity using auth module
-            if oidc_claims:
-                auth.inject_verified_identity(context.custom_data, oidc_claims)
-            
-            # Fallback to basic agent identity
-            context.custom_data["verified_agent_id"] = self.agent_id
-            context.custom_data["verified_role"] = self.agent_role
-            context.custom_data["verified_account"] = self.verified_account
-    
+        self._sink(event, f"Model response ({callback_context.agent_name})")
+
+        for kqml_msg in kqml_messages:
+            self._store_kqml_in_timeline(kqml_msg)
+
+        return None
+
+    @override
+    async def on_model_error_callback(
+        self,
+        *,
+        callback_context: CallbackContext,
+        llm_request: LlmRequest,
+        error: Exception,
+    ) -> Optional[LlmResponse]:
+        event = self._build_event(
+            event_type="model_error",
+            hook_name="on_model_error_callback",
+            model_name=llm_request.model,
+            tool_error=str(error),
+            extra_context={"callback_agent": callback_context.agent_name},
+        )
+        self._sink(event, f"Model error: {error}")
+        return None
+
+    def _normalize_tool_result(self, result: Any) -> Any:
+        if isinstance(result, dict):
+            return result
+        return {"result": result}
+
+    def _llm_content_to_text(self, content: Optional[types.Content]) -> str:
+        if content is None:
+            return ""
+        parts: List[str] = []
+        if getattr(content, "parts", None):
+            for part in content.parts:
+                if getattr(part, "text", None):
+                    parts.append(part.text)
+        return "\n".join(parts) if parts else str(content)
+
+    def _usage_dict(self, llm_response: LlmResponse) -> Dict[str, Optional[int]]:
+        meta = llm_response.usage_metadata
+        if not meta:
+            return {}
+        return {
+            "input_tokens": getattr(meta, "prompt_token_count", None),
+            "output_tokens": getattr(meta, "candidates_token_count", None),
+            "total_tokens": getattr(meta, "total_token_count", None),
+        }
+
+    def _truncate(self, value: str, max_len: int = MODEL_OUTPUT_MAX_CHARS) -> str:
+        if len(value) <= max_len:
+            return value
+        return value[:max_len] + "...[truncated]"
+
     def _extract_mcp_operation(
         self, tool_name: str, tool_input: Dict[str, Any]
-    ) -> tuple:
-        """
-        Detect MCP operations and extract ground-truth data.
-        Enhanced to capture comprehensive grid management operations.
-        
-        Returns:
-            (operation_name, extracted_data)
-        """
-        mcp_data = {}
-        
-        # Primary MCP Grid State Server operations
-        if "retrieve_grid_state" in tool_name.lower():
-            # This is the main MCP operation - capture full grid state
-            mcp_data["grid_state"] = tool_input.get("grid_state", {})
+    ) -> tuple[str, Dict[str, Any]]:
+        mcp_data: Dict[str, Any] = {}
+        name_lower = tool_name.lower()
+
+        if "retrieve_grid_state" in name_lower or "fetch_grid_state" in name_lower:
+            mcp_data["grid_state"] = tool_input.get("grid_state") or tool_input
             mcp_data["mcp_server"] = "mcp-grid-state"
-            mcp_data["operation_type"] = "ground_truth_retrieval"
             return "retrieve_grid_state", mcp_data
-        
-        # Agent-to-agent communications (KQML over HTTPS)
-        elif any(agent in tool_name.lower() for agent in ["solar_agent_access", "wind_agent_access", 
-                                                          "battery_agent_access", "load_agent_access"]):
-            # Extract agent communication context
-            agent_type = None
-            for agent in ["solar", "wind", "battery", "load"]:
-                if agent in tool_name.lower():
-                    agent_type = agent
-                    break
-            
-            mcp_data["agent_communication"] = {
-                "target_agent": agent_type,
-                "command": tool_input.get("command", "unknown"),
-                "params": tool_input.get("params", {}),
-                "conversation_id": tool_input.get("conversation_id")
+
+        if "record_control_decision" in name_lower:
+            mcp_data["control_decision"] = {
+                "action": tool_input.get("action"),
+                "rationale": tool_input.get("rationale"),
             }
-            mcp_data["operation_type"] = "agent_communication"
-            return f"{agent_type}_agent_communication", mcp_data
-        
-        # Grid management communication functions
-        elif any(comm_type in tool_name.lower() for comm_type in ["send_grid_alert", "request_research_analysis", "propose_grid_action"]):
-            comm_type = None
-            if "alert" in tool_name.lower():
-                comm_type = "grid_alert"
-            elif "research" in tool_name.lower():
-                comm_type = "research_request"
-            elif "propose" in tool_name.lower():
-                comm_type = "grid_proposal"
-            
-            mcp_data["grid_communication"] = {
-                "type": comm_type,
-                "receiver": tool_input.get("receiver_id", "unknown"),
-                "subject": tool_input.get("subject", ""),
-                "priority": tool_input.get("priority", "medium"),
-                "grid_impact": tool_input.get("grid_impact", "unknown"),
-                "affected_components": tool_input.get("affected_components", [])
-            }
-            mcp_data["operation_type"] = "grid_communication"
-            return comm_type, mcp_data
-        
-        # Legacy pricing operations (if implemented)
-        elif "retrieve_pricing" in tool_name.lower():
-            mcp_data["pricing_data"] = tool_input.get("pricing_data", {})
-            mcp_data["mcp_server"] = "mcp-pricing"
-            mcp_data["operation_type"] = "pricing_retrieval"
-            return "retrieve_pricing", mcp_data
-        
-        else:
-            # Capture any other tool operations for completeness
-            mcp_data["tool_context"] = {
-                "tool_name": tool_name,
-                "input_keys": list(tool_input.keys()) if tool_input else [],
-                "has_conversation_id": "conversation_id" in tool_input if tool_input else False
-            }
-            mcp_data["operation_type"] = "other_tool"
-            return "other_operation", mcp_data
-    
+            return "record_control_decision", mcp_data
+
+        if any(
+            t in name_lower
+            for t in (
+                "notify_control",
+                "notify_microgrid",
+                "send_grid",
+                "flag_operator",
+                "mark_control_decision",
+            )
+        ):
+            mcp_data["monitor_communication"] = tool_input
+            return "monitor_communication", mcp_data
+
+        if "rag_access" in name_lower or "query_knowledge" in name_lower:
+            mcp_data["rag_query"] = tool_input.get("query") or tool_input.get("query_text")
+            return "rag_query", mcp_data
+
+        if any(agent in name_lower for agent in ("solar", "wind", "battery", "load")):
+            return "domain_agent_access", {"tool_input": tool_input}
+
+        mcp_data["tool_context"] = {"input_keys": list(tool_input.keys()) if tool_input else []}
+        return "other_operation", mcp_data
+
     def _extract_kqml_messages(self, model_output: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Extract comprehensive KQML messages from model output.
-        
-        Looks for structured KQML messages in parenthetical format and
-        extracts all performatives with their details.
-        
-        Returns:
-            List of dicts containing KQML message details
-        """
-        import re
-        from . import kqml
-        
-        text = ""
-        if isinstance(model_output, dict):
-            text = model_output.get("content", "")
-        elif isinstance(model_output, str):
-            text = model_output
-        
-        kqml_messages = []
-        
-        # Look for KQML messages in parenthetical format
-        kqml_pattern = r'\([^)]+\)'
-        matches = re.findall(kqml_pattern, text)
-        
-        for match in matches:
+        from shared import kqml as kqml_mod
+
+        text = model_output.get("content", "") if isinstance(model_output, dict) else str(model_output)
+        kqml_messages: List[Dict[str, Any]] = []
+        for match in re.findall(r"\([^)]+\)", text):
             try:
-                # Try to parse as KQML
-                kqml_msg = kqml.parse_kqml(match)
-                kqml_messages.append({
-                    "performative": kqml_msg.performative,
-                    "raw_kqml": match,
-                    "sender_id": kqml_msg.sender_id,
-                    "receiver_id": kqml_msg.receiver_id,
-                    "conversation_id": kqml_msg.conversation_id,
-                    "subject": kqml_msg.subject,
-                    "content": kqml_msg.content,
-                    "priority": kqml_msg.priority,
-                    "grid_impact": kqml_msg.grid_impact,
-                    "affected_components": kqml_msg.affected_components,
-                })
-            except:
-                # Not valid KQML, skip
+                msg = kqml_mod.parse_kqml(match)
+                kqml_messages.append(
+                    {
+                        "performative": msg.performative,
+                        "raw_kqml": match,
+                        "sender_id": msg.sender_id,
+                        "receiver_id": msg.receiver_id,
+                        "conversation_id": msg.conversation_id,
+                        "subject": msg.subject,
+                        "content": msg.content,
+                        "priority": msg.priority,
+                        "grid_impact": msg.grid_impact,
+                        "affected_components": msg.affected_components,
+                    }
+                )
+            except Exception:
                 continue
-        
-        # Fallback: look for performative keywords if no structured KQML found
+
         if not kqml_messages:
             text_lower = text.lower()
-            performatives = ["propose", "accept", "reject", "inform", "query", "answer", "request"]
-            
-            for perf in performatives:
+            for perf in ("propose", "accept", "reject", "inform", "query", "answer", "request"):
                 if perf in text_lower:
-                    kqml_messages.append({
-                        "performative": perf,
-                        "raw_kqml": text,
-                        "sender_id": self.agent_id,
-                        "receiver_id": "unknown",
-                        "conversation_id": "generated",
-                        "subject": None,
-                        "content": text,
-                        "priority": None,
-                        "grid_impact": None,
-                        "affected_components": None,
-                    })
+                    kqml_messages.append(
+                        {
+                            "performative": perf,
+                            "raw_kqml": self._truncate(text),
+                            "sender_id": self.agent_id,
+                            "receiver_id": "unknown",
+                            "conversation_id": "inferred",
+                        }
+                    )
                     break
-        
         return kqml_messages
-    
+
     def _store_kqml_in_timeline(self, kqml_data: Dict[str, Any]) -> None:
-        """
-        Store KQML message in the audit timeline.
-        
-        Args:
-            kqml_data: Dict containing KQML message data
-        """
         try:
             self.audit_db.insert_kqml_performative_enhanced(
-                performative_id=self._generate_event_id(),
-                timestamp=datetime.utcnow().isoformat(),
+                performative_id=str(uuid.uuid4()),
+                timestamp=self._utc_now(),
                 conversation_id=kqml_data.get("conversation_id", "unknown"),
                 sender_agent_id=kqml_data.get("sender_id", self.agent_id),
                 receiver_agent_id=kqml_data.get("receiver_id", "unknown"),
@@ -511,55 +426,19 @@ class GlobalInstrumentationPlugin(BasePlugin):
                 grid_impact=kqml_data.get("grid_impact"),
                 affected_components=kqml_data.get("affected_components"),
             )
-        except Exception as e:
-            # Log error but don't fail the entire instrumentation
-            print(f"Warning: Failed to store KQML in timeline: {e}")
-    
-    def _extract_kqml_performative(self, model_output: Dict[str, Any]) -> tuple:
-        """
-        Legacy method for backward compatibility.
-        Extract KQML performative verb from model output.
-        
-        Returns:
-            (performative_verb, raw_kqml_string)
-        """
-        messages = self._extract_kqml_messages(model_output)
-        if messages:
-            return messages[0]["performative"], messages[0]["raw_kqml"]
-        return "unclassified", ""
-    
+        except Exception as exc:
+            print(f"Warning: KQML timeline insert failed: {exc}")
+
     def _sanitize_for_logging(self, data: Any) -> Any:
-        """
-        Remove sensitive data before logging (API keys, credentials).
-        """
         if isinstance(data, dict):
-            sanitized = {}
-            for key, value in data.items():
-                if any(secret in key.lower() for secret in ["key", "secret", "token", "password"]):
-                    sanitized[key] = "[REDACTED]"
-                else:
-                    sanitized[key] = self._sanitize_for_logging(value)
-            return sanitized
-        elif isinstance(data, list):
-            return [self._sanitize_for_logging(item) for item in data]
+            return {
+                key: (
+                    "[REDACTED]"
+                    if any(s in key.lower() for s in ("key", "secret", "token", "password"))
+                    else self._sanitize_for_logging(value)
+                )
+                for key, value in data.items()
+            }
+        if isinstance(data, list):
+            return [self._sanitize_for_logging(item) for item in data[:100]]
         return data
-    
-    def _generate_event_id(self) -> str:
-        """Generate cryptographically unique event ID."""
-        import uuid
-        return str(uuid.uuid4())
-    
-    def _log_and_sink(self, event: AuditEvent, message: str) -> None:
-        """
-        Log event locally and sink to SQLite database.
-        """
-        if self.enable_local_logging:
-            print(
-                f"[{event.event_type.upper()}] {message}\n"
-                f"  Event ID: {event.event_id}\n"
-                f"  Agent: {event.agent_id} ({event.agent_role})\n"
-                f"  Account: {event.verified_account}"
-            )
-        
-        # Store in local SQLite database
-        self.audit_db.insert_event(event)

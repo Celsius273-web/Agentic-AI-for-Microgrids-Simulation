@@ -9,10 +9,14 @@ No cloud dependencies - fully local simulation.
 import sqlite3
 import json
 import logging
+import threading
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import asdict
+
+_audit_db_registry: Dict[str, "LocalAuditDB"] = {}
+_registry_lock = threading.Lock()
 
 
 class LocalAuditDB:
@@ -29,7 +33,8 @@ class LocalAuditDB:
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.logger = logging.getLogger(__name__)
-        
+        self._write_lock = threading.Lock()
+
         self._init_schema()
         print(f"✓ Local audit database initialized: {db_path}")
     
@@ -176,7 +181,8 @@ class LocalAuditDB:
             True if successful, False otherwise
         """
         try:
-            self.conn.execute("""
+            with self._write_lock:
+                self.conn.execute("""
                 INSERT INTO audit_events VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
@@ -206,9 +212,9 @@ class LocalAuditDB:
                 event.request_id,
                 event.parent_event_id,
                 json.dumps(event.extra_context) if event.extra_context else None,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
             ))
-            self.conn.commit()
+                self.conn.commit()
             return True
         except Exception as e:
             self.logger.error(f"Error inserting event: {e}")
@@ -240,8 +246,8 @@ class LocalAuditDB:
             True if successful
         """
         try:
-            # Legacy support - convert old parameters to new format
-            self.conn.execute("""
+            with self._write_lock:
+                self.conn.execute("""
                 INSERT INTO kqml_timeline (
                     performative_id, timestamp, sender_agent_id, performative_verb, 
                     raw_kqml, energy_mw, price, created_at
@@ -254,9 +260,9 @@ class LocalAuditDB:
                 raw_kqml,
                 energy_mwh,  # Map to energy_mw
                 price_per_mwh,  # Map to price
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
             ))
-            self.conn.commit()
+                self.conn.commit()
             return True
         except Exception as e:
             self.logger.error(f"Error inserting KQML performative: {e}")
@@ -310,12 +316,12 @@ class LocalAuditDB:
             True if successful
         """
         try:
-            # Serialize complex fields to JSON
             affected_components_json = json.dumps(affected_components) if affected_components else None
             params_json = json.dumps(params) if params else None
             custom_fields_json = json.dumps(custom_fields) if custom_fields else None
-            
-            self.conn.execute("""
+
+            with self._write_lock:
+                self.conn.execute("""
                 INSERT INTO kqml_timeline (
                     performative_id, timestamp, conversation_id, sender_agent_id, 
                     receiver_agent_id, performative_verb, raw_kqml, subject, content, 
@@ -341,9 +347,9 @@ class LocalAuditDB:
                 command,
                 params_json,
                 custom_fields_json,
-                datetime.utcnow().isoformat()  # created_at
+                datetime.now(timezone.utc).isoformat()
             ))
-            self.conn.commit()
+                self.conn.commit()
             return True
         except Exception as e:
             self.logger.error(f"Failed to insert enhanced KQML performative: {e}")
@@ -493,3 +499,12 @@ class LocalAuditDB:
     def __del__(self):
         """Ensure connection is closed on cleanup."""
         self.close()
+
+
+def get_shared_audit_db(db_path: str = "audit_trail.db") -> LocalAuditDB:
+    """Return a process-wide LocalAuditDB instance per db_path (safe for concurrent writers)."""
+    resolved = str(Path(db_path).resolve())
+    with _registry_lock:
+        if resolved not in _audit_db_registry:
+            _audit_db_registry[resolved] = LocalAuditDB(resolved)
+        return _audit_db_registry[resolved]

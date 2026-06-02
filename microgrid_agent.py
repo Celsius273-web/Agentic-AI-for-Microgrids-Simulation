@@ -3,18 +3,15 @@ from typing import Any, Dict, List, Optional
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
-from google.adk.plugins.logging_plugin import LoggingPlugin
-
 from shared.config import (
     MODEL_NAME, 
     GEMINI_API_KEY, 
     retry_config, 
     AGENT_ID, 
     AGENT_ROLE,
-    AUDIT_DB_PATH,
-    ENABLE_LOCAL_INSTRUMENTATION,
     VERIFIED_ACCOUNT,
 )
+from shared.runner_plugins import build_adk_plugins
 from shared.state import _read_state, _write_state
 from shared.agent_server import run_agent_server
 from shared.agent_interfaces import (
@@ -308,23 +305,11 @@ You work collaboratively with all agents, providing strategic guidance while all
 
 if __name__ == "__main__":
     verified_account = VERIFIED_ACCOUNT or "microgrid-agent@microgrid.local"
-    plugins = [LoggingPlugin()]
-
-    if ENABLE_LOCAL_INSTRUMENTATION:
-        try:
-            from shared.instrumentation_plugin import GlobalInstrumentationPlugin
-
-            plugins.append(
-                GlobalInstrumentationPlugin(
-                    agent_id=AGENT_ID or "microgrid-agent",
-                    agent_role=AGENT_ROLE,
-                    verified_account=verified_account,
-                    db_path=AUDIT_DB_PATH,
-                    enable_local_logging=True,
-                )
-            )
-        except ImportError as exc:
-            print(f"Local instrumentation unavailable: {exc}")
-
+    plugins = build_adk_plugins(
+        agent_id=AGENT_ID or "microgrid-agent",
+        agent_role=AGENT_ROLE or "control",
+        verified_account=verified_account,
+        enable_console_audit=True,
+    )
     InMemoryRunner(agent=microgrid_agent, plugins=plugins)
     run_agent_server()

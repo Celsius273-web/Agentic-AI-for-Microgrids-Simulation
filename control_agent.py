@@ -4,10 +4,9 @@ from typing import Any, Dict, List, Optional
 from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
-from google.adk.plugins.logging_plugin import LoggingPlugin
-
-from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config
+from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config, AGENT_ID, AGENT_ROLE, VERIFIED_ACCOUNT
 from shared.agent_server import run_agent_server
+from shared.runner_plugins import build_adk_plugins
 from shared.state import _read_state, read_grid_state
 from shared.control_decisions import record_control_decision as _record_control_decision
 
@@ -88,5 +87,11 @@ CONSTRAINTS:
 )
 
 if __name__ == "__main__":
-    InMemoryRunner(agent=control_agent, plugins=[LoggingPlugin()])
+    plugins = build_adk_plugins(
+        agent_id=AGENT_ID or "control-agent",
+        agent_role=AGENT_ROLE or "control",
+        verified_account=VERIFIED_ACCOUNT or "control-agent@microgrid.local",
+        enable_console_audit=True,
+    )
+    InMemoryRunner(agent=control_agent, plugins=plugins)
     run_agent_server()

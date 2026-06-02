@@ -7,7 +7,9 @@ from shared.config import AUDIT_DB_PATH
 from shared.control_decisions import list_control_decisions, get_control_decision
 from shared.state import _read_state, read_grid_state
 
-AUDIT_EXCLUDE_HOOKS = {"model_end"}
+# Monitor reads skip empty rows after field stripping (see _sanitize_audit_event).
+AUDIT_EXCLUDE_HOOKS: set = set()
+AUDIT_EXCLUDE_EVENT_TYPES: set = set()
 AUDIT_TRUNCATE_FIELDS = {"tool_outputs", "tool_inputs", "extra_context"}
 
 
@@ -27,7 +29,18 @@ def _sanitize_audit_event(row: Dict[str, Any]) -> Dict[str, Any]:
     """Drop raw model hooks; truncate large JSON fields."""
     if row.get("hook_name") in AUDIT_EXCLUDE_HOOKS:
         return {}
+    if row.get("event_type") in AUDIT_EXCLUDE_EVENT_TYPES:
+        return {}
     out = dict(row)
+    if out.get("event_type") == "model_inference":
+        out["kqml_raw"] = None
+        if out.get("extra_context"):
+            try:
+                extra = json.loads(out["extra_context"]) if isinstance(out["extra_context"], str) else out["extra_context"]
+                extra.pop("content", None)
+                out["extra_context"] = json.dumps(extra)
+            except (json.JSONDecodeError, TypeError):
+                pass
     for field in AUDIT_TRUNCATE_FIELDS:
         if out.get(field):
             try:
@@ -41,8 +54,8 @@ def _sanitize_audit_event(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _get_audit_db():
-    from shared.local_audit_db import LocalAuditDB
-    return LocalAuditDB(AUDIT_DB_PATH)
+    from shared.local_audit_db import get_shared_audit_db
+    return get_shared_audit_db(AUDIT_DB_PATH)
 
 
 def get_control_audit_trail(
