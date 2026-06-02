@@ -1,13 +1,4 @@
-"""
-KQML (Knowledge Query and Manipulation Language) Implementation
-============================================================
-
-Implements KQML performatives for comprehensive agent-to-agent communication 
-in the microgrid system. Focuses on grid management operations rather than 
-just energy trading.
-
-Supported performatives: propose, accept, reject, inform, query, answer.
-"""
+"""KQML performatives for inter-agent microgrid communication."""
 
 import uuid
 from datetime import datetime, timezone

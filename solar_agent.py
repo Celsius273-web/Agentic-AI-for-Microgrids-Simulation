@@ -9,8 +9,6 @@ from shared.state import update_component_state, read_grid_state
 import random
 import time
 
-# --- Tools ---
-
 def get_solar_output(tool_context: Any) -> Dict[str, Any]:
     """Return current solar generation output in MW."""
     # Simulate realistic solar output based on time of day
@@ -102,8 +100,6 @@ def get_solar_forecast(tool_context: Any, forecast_hours: int = 24) -> Dict[str,
         "generated_at": current_time.isoformat()
     }
 
-# --- Agent Definition ---
-
 solar_agent = Agent(
     model=Gemini(model=MODEL_NAME, api_key=GEMINI_API_KEY, retry_options=retry_config),
     name="SolarAgent",
@@ -128,9 +124,8 @@ You do not make strategic decisions. You execute commands and report data.""",
     ]
 )
 
-# --- Runner ---
-
 if __name__ == "__main__":
-    runner = InMemoryRunner(agent=solar_agent, plugins=[LoggingPlugin()])
-    print("SolarAgent runner started.")
-    # TODO: replace with FastAPI HTTP server
+    from shared.agent_server import run_agent_server
+
+    InMemoryRunner(agent=solar_agent, plugins=[LoggingPlugin()])
+    run_agent_server()

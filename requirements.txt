@@ -7,3 +7,6 @@ requests
 fastapi
 uvicorn
 pykqml
+chromadb
+sentence-transformers
+python-multipart

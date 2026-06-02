@@ -6,8 +6,7 @@ from google.adk.plugins.logging_plugin import LoggingPlugin
 
 from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config
 from shared.state import _read_state, _write_state
-
-# --- Tools ---
+from shared.agent_server import run_agent_server
 
 def get_battery_status(tool_context: Any) -> Dict[str, Any]:
     """Return current battery state of charge and power flow."""
@@ -72,8 +71,6 @@ def set_charge_rate(tool_context: Any, charge_rate_kw: float) -> Dict[str, Any]:
         "timestamp": time.time()
     }
 
-# --- Agent Definition ---
-
 battery_agent = Agent(
     model=Gemini(model=MODEL_NAME, api_key=GEMINI_API_KEY, retry_options=retry_config),
     name="BatteryAgent",
@@ -98,9 +95,6 @@ You do not make strategic decisions. You execute commands and report data.""",
     ]
 )
 
-# --- Runner ---
-
 if __name__ == "__main__":
-    runner = InMemoryRunner(agent=battery_agent, plugins=[LoggingPlugin()])
-    print("BatteryAgent runner started.")
-    # TODO: replace with FastAPI HTTP server
+    InMemoryRunner(agent=battery_agent, plugins=[LoggingPlugin()])
+    run_agent_server()

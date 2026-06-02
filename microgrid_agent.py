@@ -25,8 +25,6 @@ from shared.agent_interfaces import (
     load_agent_access
 )
 
-# --- Tools ---
-
 def set_operational_priorities(
     tool_context: Any,
     priority_order: List[str],
@@ -206,8 +204,6 @@ def propose_grid_operation(tool_context: Any, target_agent: str, operation_subje
         grid_impact="stability"
     )
 
-# --- Agent Definition ---
-
 microgrid_agent = Agent(
     model=Gemini(model=MODEL_NAME, api_key=GEMINI_API_KEY, retry_options=retry_config),
     name="MicrogridAgent",
@@ -310,52 +306,25 @@ You work collaboratively with all agents, providing strategic guidance while all
     ]
 )
 
-# --- Runner with Local Instrumentation ---
-
 if __name__ == "__main__":
-    # Prepare verified identity
     verified_account = VERIFIED_ACCOUNT or "microgrid-agent@microgrid.local"
-    
-    # Create plugin list
     plugins = [LoggingPlugin()]
-    
-    # Conditional: Add local instrumentation plugin
+
     if ENABLE_LOCAL_INSTRUMENTATION:
         try:
             from shared.instrumentation_plugin import GlobalInstrumentationPlugin
 
-            print("=" * 70)
-            print("REGISTERING LOCAL INSTRUMENTATION PLUGIN")
-            print("=" * 70)
-
-            # Initialize plugin with local SQLite backend
-            instrumentation_plugin = GlobalInstrumentationPlugin(
-                agent_id=AGENT_ID or "microgrid-agent",
-                agent_role=AGENT_ROLE,
-                verified_account=verified_account,
-                db_path=AUDIT_DB_PATH,
-                enable_local_logging=True
+            plugins.append(
+                GlobalInstrumentationPlugin(
+                    agent_id=AGENT_ID or "microgrid-agent",
+                    agent_role=AGENT_ROLE,
+                    verified_account=verified_account,
+                    db_path=AUDIT_DB_PATH,
+                    enable_local_logging=True,
+                )
             )
-
-            # Add to plugins
-            plugins.append(instrumentation_plugin)
-
-            print(f"✓ Agent ID: {AGENT_ID or 'microgrid-agent'}")
-            print(f"✓ Verified Account: {verified_account}")
-            print(f"✓ Audit DB: {AUDIT_DB_PATH}")
-            print("\nCapturing lifecycle hooks:")
-            print("  - on_agent_start: Agent initialization")
-            print("  - on_tool_start: MCP ground truth inputs")
-            print("  - on_tool_end: Tool outputs and side effects")
-            print("  - on_model_end: KQML performatives")
-            print("=" * 70)
         except ImportError as exc:
-            print(f"⚠ Local instrumentation unavailable: {exc}")
-    else:
-        print("⚠ Local instrumentation disabled")
-    
-    # Create runner with all plugins
-    runner = InMemoryRunner(agent=microgrid_agent, plugins=plugins)
-    print("\n✓ MicrogridAgent runner initialized with lifecycle hook interception")
-    print(f"  All events stored in: {AUDIT_DB_PATH}")
+            print(f"Local instrumentation unavailable: {exc}")
+
+    InMemoryRunner(agent=microgrid_agent, plugins=plugins)
     run_agent_server()

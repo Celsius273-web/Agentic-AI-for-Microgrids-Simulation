@@ -10,7 +10,10 @@ __pycache__/
 audit_trail.db
 audit_trail.db-shm
 audit_trail.db-wal
-old_md_files/
-# local scratch
-test.py
+chroma_db/
+
+microgrid_ui/node_modules/
+microgrid_ui/build/
+
+# integration tests requiring docker stack
 test_kqml_mcp_integration.py

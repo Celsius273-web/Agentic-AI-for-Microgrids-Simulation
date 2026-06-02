@@ -7,8 +7,6 @@ from google.adk.plugins.logging_plugin import LoggingPlugin
 from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config
 from shared.state import _read_state, _write_state
 
-# --- Tools ---
-
 def get_wind_output(tool_context: Any) -> Dict[str, Any]:
     """Return current wind generation output in kW."""
     # TODO: read from real sensor data or simulation
@@ -23,8 +21,6 @@ def set_curtailment(tool_context: Any, curtailment_percent: float) -> Dict[str, 
     """
     # TODO: send command to turbine controller
     return {"status": "stub", "curtailment_percent": curtailment_percent}
-
-# --- Agent Definition ---
 
 wind_agent = Agent(
     model=Gemini(model=MODEL_NAME, api_key=GEMINI_API_KEY, retry_options=retry_config),
@@ -49,9 +45,8 @@ You do not make strategic decisions. You execute commands and report data.""",
     ]
 )
 
-# --- Runner ---
-
 if __name__ == "__main__":
-    runner = InMemoryRunner(agent=wind_agent, plugins=[LoggingPlugin()])
-    print("WindAgent runner started.")
-    # TODO: replace with FastAPI HTTP server
+    from shared.agent_server import run_agent_server
+
+    InMemoryRunner(agent=wind_agent, plugins=[LoggingPlugin()])
+    run_agent_server()

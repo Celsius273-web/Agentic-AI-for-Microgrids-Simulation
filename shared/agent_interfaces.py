@@ -7,9 +7,6 @@ from . import auth
 from . import config
 from . import kqml
 
-# Each function below sends a command to another agent container over Docker's internal network
-# using HTTPS with mTLS and OIDC token authentication.
-# Commands are sent as KQML performatives for structured agent communication.
 
 def retrieve_grid_state(tool_context: Any) -> Dict[str, Any]:
     """
@@ -24,10 +21,7 @@ def retrieve_grid_state(tool_context: Any) -> Dict[str, Any]:
         Dict containing grid state data or error information
     """
     try:
-        # Get service account token for Authorization header
         token = auth.get_service_account_token()
-        
-        # Call MCP Grid State Server
         url = f"https://mcp-grid-state:{config.MTLS_SERVER_PORT}/retrieve_grid_state"
         
         response = requests.post(
@@ -65,18 +59,43 @@ def retrieve_grid_state(tool_context: Any) -> Dict[str, Any]:
         }
 
 
-def RAG_access(tool_context: Any, query: str) -> Dict[str, Any]:
+def RAG_access(tool_context: Any, query: str, top_k: int = 3) -> Dict[str, Any]:
     """
     Query the RAG knowledge base for best practices and technical references.
 
     Args:
         query: Natural language query describing the information needed
+        top_k: Number of top results to return (default 3)
         
     Returns:
         Dict containing RAG query results or error information
     """
-    # TODO: integrate with your chosen vector store (e.g. ChromaDB, Pinecone, Vertex AI Search)
-    return {"status": "not_implemented", "query": query}
+    try:
+        from .rag import search_knowledge_base
+
+        search_result = search_knowledge_base(query, top_k)
+
+        return {
+            "status": search_result.get("status", "error"),
+            "query": query,
+            "results": search_result.get("results", []),
+            "total_docs": search_result.get("total_docs", 0),
+            "search_timestamp": search_result.get("search_timestamp"),
+            "error": search_result.get("error") if search_result.get("status") == "error" else None
+        }
+        
+    except ImportError as e:
+        return {
+            "status": "error",
+            "error": f"RAG system not available: {e}",
+            "query": query
+        }
+    except Exception as e:
+        return {
+            "status": "error", 
+            "error": f"RAG query failed: {e}",
+            "query": query
+        }
 
 def _send_agent_request(
     service_name: str,
@@ -99,15 +118,11 @@ def _send_agent_request(
     Returns:
         Dict containing response data or error information
     """
-    # Generate conversation_id if not provided (for new conversations)
     if not conversation_id:
         conversation_id = str(uuid.uuid4())
-    
+
     try:
-        # Get service account token for Authorization header
         token = auth.get_service_account_token()
-        
-        # Build KQML request message with validation
         kqml_msg = kqml.request(
             sender_id=config.AGENT_ID,
             receiver_id=receiver_id,
@@ -115,8 +130,7 @@ def _send_agent_request(
             params=params or {},
             conversation_id=conversation_id
         )
-        
-        # Send HTTPS request with mTLS certificates
+
         url = f"https://{service_name}:{config.MTLS_SERVER_PORT}/command"
         
         response = requests.post(
@@ -132,8 +146,7 @@ def _send_agent_request(
         )
         
         response.raise_for_status()
-        
-        # Parse and validate KQML response
+
         try:
             response_kqml = kqml.parse_kqml(response.text)
         except kqml.ValidationError as e:
@@ -144,11 +157,9 @@ def _send_agent_request(
                 "error": f"Invalid KQML response: {e}",
                 "conversation_id": conversation_id
             }
-        
-        # Validate conversation_id matches
+
         kqml.enforce_conversation_id(response_kqml, conversation_id)
-        
-        # Extract and return structured data
+
         return {
             "status": "success" if response_kqml.performative == "accept" else "rejected",
             "agent": receiver_id,
@@ -238,8 +249,6 @@ def load_agent_access(tool_context: Any, command: str, params: Optional[Dict] = 
     """
     return _send_agent_request("load-agent", "load-agent", command, params)
 
-# Additional convenience functions for common agent interactions
-
 def get_all_generation_status(tool_context: Any) -> Dict[str, Any]:
     """
     Query all generation agents for current output status.
@@ -248,12 +257,8 @@ def get_all_generation_status(tool_context: Any) -> Dict[str, Any]:
         Dict containing status from solar and wind agents
     """
     results = {}
-    
-    # Get solar status
     solar_result = solar_agent_access(tool_context, "get_output")
     results["solar"] = solar_result
-    
-    # Get wind status  
     wind_result = wind_agent_access(tool_context, "get_output")
     results["wind"] = wind_result
     
@@ -271,12 +276,8 @@ def get_all_storage_status(tool_context: Any) -> Dict[str, Any]:
         Dict containing battery status and load demand
     """
     results = {}
-    
-    # Get battery status
     battery_result = battery_agent_access(tool_context, "get_soc")
     results["battery"] = battery_result
-    
-    # Get load demand
     load_result = load_agent_access(tool_context, "get_demand")
     results["load"] = load_result
     
@@ -286,8 +287,6 @@ def get_all_storage_status(tool_context: Any) -> Dict[str, Any]:
         "timestamp": kqml._generate_timestamp()
     }
 
-
-# Grid Management Communication Functions
 
 def send_grid_alert(receiver_id: str, subject: str, content: str, 
                    priority: str = "medium", grid_impact: str = "stability",
@@ -309,7 +308,6 @@ def send_grid_alert(receiver_id: str, subject: str, content: str,
         Dict containing communication result
     """
     try:
-        # Build KQML inform message
         alert_msg = kqml.inform(
             sender_id=config.AGENT_ID,
             receiver_id=receiver_id,
@@ -354,7 +352,6 @@ def request_research_analysis(researcher_id: str, subject: str, content: str,
         Dict containing communication result
     """
     try:
-        # Build KQML query message
         query_msg = kqml.query(
             sender_id=config.AGENT_ID,
             receiver_id=researcher_id,
@@ -401,7 +398,6 @@ def propose_grid_action(receiver_id: str, subject: str, content: str,
         Dict containing communication result
     """
     try:
-        # Build KQML propose message
         proposal_msg = kqml.propose(
             sender_id=config.AGENT_ID,
             receiver_id=receiver_id,

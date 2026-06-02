@@ -7,8 +7,6 @@ from google.adk.plugins.logging_plugin import LoggingPlugin
 from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config
 from shared.state import _read_state, _write_state
 
-# --- Tools ---
-
 def get_load_demand(tool_context: Any) -> Dict[str, Any]:
     """Return current total load demand in kW broken down by load type."""
     # TODO: read from smart meter or load controller
@@ -35,8 +33,6 @@ def restore_load(tool_context: Any, load_ids: List[str]) -> Dict[str, Any]:
     # TODO: send reconnect commands to controllable load switches
     return {"status": "stub", "restored_loads": load_ids}
 
-# --- Agent Definition ---
-
 load_agent = Agent(
     model=Gemini(model=MODEL_NAME, api_key=GEMINI_API_KEY, retry_options=retry_config),
     name="LoadAgent",
@@ -62,9 +58,8 @@ You do not make strategic decisions. You execute commands and report data.""",
     ]
 )
 
-# --- Runner ---
-
 if __name__ == "__main__":
-    runner = InMemoryRunner(agent=load_agent, plugins=[LoggingPlugin()])
-    print("LoadAgent runner started.")
-    # TODO: replace with FastAPI HTTP server
+    from shared.agent_server import run_agent_server
+
+    InMemoryRunner(agent=load_agent, plugins=[LoggingPlugin()])
+    run_agent_server()

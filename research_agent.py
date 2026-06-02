@@ -7,8 +7,6 @@ from shared.config import MODEL_NAME, GEMINI_API_KEY, retry_config
 from shared.agent_interfaces import RAG_access
 from shared.agent_server import run_agent_server
 
-# --- Agent Definition ---
-
 researcher_agent = Agent(
     model=Gemini(model=MODEL_NAME, api_key=GEMINI_API_KEY, retry_options=retry_config),
     name="ResearcherAgent",
@@ -38,9 +36,6 @@ You provide raw, unbiased information. The Control Agent and Microgrid Agent mak
     ]
 )
 
-# --- Runner ---
-
 if __name__ == "__main__":
-    runner = InMemoryRunner(agent=researcher_agent, plugins=[LoggingPlugin()])
-    print("ResearcherAgent runner initialized.")
+    InMemoryRunner(agent=researcher_agent, plugins=[LoggingPlugin()])
     run_agent_server()
