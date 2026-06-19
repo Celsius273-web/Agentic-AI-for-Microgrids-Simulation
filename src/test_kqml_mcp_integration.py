@@ -10,29 +10,30 @@ import sys
 import os
 import json
 from datetime import datetime, timezone
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Load environment variables from .env file
 def load_env_file():
     """Load environment variables from .env file if it exists."""
-    env_path = os.path.join(os.path.dirname(__file__), '.env')
-    if os.path.exists(env_path):
+    env_path = REPO_ROOT / ".env"
+    if env_path.exists():
         with open(env_path, 'r') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
-                    # Remove quotes if present
                     value = value.strip('\'"')
                     os.environ[key] = value
         print("✓ Loaded environment variables from .env file")
     else:
         print("⚠ No .env file found, using system environment variables")
 
-# Load environment variables
 load_env_file()
 
-# Add shared directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'shared'))
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 def test_kqml_functionality():
     """Test KQML message creation, validation, and parsing."""
@@ -44,7 +45,7 @@ def test_kqml_functionality():
         # Test grid management inform message
         print("1. Creating grid management inform message...")
         alert_msg = kqml.inform(
-            sender_id="solar-agent",
+            sender_id="monitor-agent",
             receiver_id="microgrid-agent",
             subject="supply-deficit-warning",
             content="Solar output dropping 15% due to cloud cover",
@@ -79,7 +80,7 @@ def test_kqml_functionality():
         # Test proposal message
         print("4. Creating grid action proposal...")
         proposal_msg = kqml.propose(
-            sender_id="battery-agent",
+            sender_id="control-agent",
             receiver_id="control-agent",
             subject="emergency-discharge-proposal",
             content="Recommend immediate 2MW discharge to prevent frequency drop",
@@ -129,7 +130,7 @@ def test_grid_state_functionality():
         print(f"   Load: {grid_data.get('load_mw', 0)}MW")
         
         print("3. Testing component updates...")
-        update_component_state("solar", output_mw=3.0, updated_by="solar-agent")
+        update_component_state("solar", output_mw=3.0, updated_by="mcp-grid-state")
         
         updated_state = read_grid_state()
         print(f"   Updated solar output: {updated_state.get('solar_mw', 0)}MW")

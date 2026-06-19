@@ -45,6 +45,6 @@ Because a multi agent system requires a lot of continuous back and forth convers
 
 ## Getting Started
 
-For a guide on how to generate the security certificates, spin up the backend services via Docker, and launch the user interface, please see the Technical_ReadME.md in this directory.
+For a guide on how to generate the security certificates, spin up the backend services via Docker, and launch the user interface, please see [Setup.md](Setup.md).
 
 ---

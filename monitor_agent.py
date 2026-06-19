@@ -1,3 +1,12 @@
+import sys
+from pathlib import Path
+
+_root = Path(__file__).resolve().parent
+for _p in (_root / "src", _root):
+    _entry = str(_p)
+    if _entry not in sys.path:
+        sys.path.insert(0, _entry)
+
 from typing import Any, Dict, List, Optional
 
 from google.adk.agents import Agent

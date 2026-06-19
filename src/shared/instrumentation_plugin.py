@@ -363,9 +363,6 @@ class GlobalInstrumentationPlugin(BasePlugin):
             mcp_data["rag_query"] = tool_input.get("query") or tool_input.get("query_text")
             return "rag_query", mcp_data
 
-        if any(agent in name_lower for agent in ("solar", "wind", "battery", "load")):
-            return "domain_agent_access", {"tool_input": tool_input}
-
         mcp_data["tool_context"] = {"input_keys": list(tool_input.keys()) if tool_input else []}
         return "other_operation", mcp_data
 

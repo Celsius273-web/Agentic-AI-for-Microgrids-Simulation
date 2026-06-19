@@ -1,3 +1,12 @@
+import sys
+from pathlib import Path
+
+_root = Path(__file__).resolve().parent
+for _p in (_root / "src", _root):
+    _entry = str(_p)
+    if _entry not in sys.path:
+        sys.path.insert(0, _entry)
+
 import time
 from typing import Any, Dict, List, Optional
 
@@ -19,21 +28,6 @@ def get_grid_summary(tool_context: Any) -> Dict[str, Any]:
         "status": "success",
         "grid_state": grid,
         "operational_priorities": state.get("operational_priorities", {}),
-    }
-
-
-def relay_command(
-    tool_context: Any,
-    target_agent: str,
-    command: str,
-    payload: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Placeholder for dispatching commands to domain agents over HTTP."""
-    return {
-        "status": "stub",
-        "target_agent": target_agent,
-        "command": command,
-        "payload": payload or {},
     }
 
 
@@ -83,7 +77,7 @@ The Monitor Agent reviews every recorded decision. Do not bypass record_control_
 CONSTRAINTS:
 - Do not bypass safety limits
 - Log significant decisions with clear rationale""",
-    tools=[get_grid_summary, relay_command, record_control_decision],
+    tools=[get_grid_summary, record_control_decision],
 )
 
 if __name__ == "__main__":

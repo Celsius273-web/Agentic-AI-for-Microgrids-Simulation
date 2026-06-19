@@ -1,4 +1,4 @@
-# Agents use service names on microgrid-net (e.g. https://solar-agent:8443/command).
+# Agents use service names on microgrid-net (e.g. https://microgrid-agent:8443/command).
 services:
 
   redis:
@@ -37,8 +37,8 @@ services:
     container_name: microgrid-agent
     volumes:
       - ./microgrid_agent.py:/app/microgrid_agent.py
-      - ./shared:/app/shared
-      - ./shared/certs:/app/shared/certs:ro
+      - ./src/shared:/app/shared
+      - ./src/shared/certs:/app/shared/certs:ro
       - ./audit_trail.db:/app/audit_trail.db
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
@@ -75,8 +75,8 @@ services:
     container_name: control-agent
     volumes:
       - ./control_agent.py:/app/control_agent.py
-      - ./shared:/app/shared
-      - ./shared/certs:/app/shared/certs:ro
+      - ./src/shared:/app/shared
+      - ./src/shared/certs:/app/shared/certs:ro
       - ./audit_trail.db:/app/audit_trail.db
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
@@ -113,8 +113,8 @@ services:
     container_name: monitor-agent
     volumes:
       - ./monitor_agent.py:/app/monitor_agent.py
-      - ./shared:/app/shared
-      - ./shared/certs:/app/shared/certs:ro
+      - ./src/shared:/app/shared
+      - ./src/shared/certs:/app/shared/certs:ro
       - ./audit_trail.db:/app/audit_trail.db
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
@@ -151,8 +151,8 @@ services:
     container_name: researcher-agent
     volumes:
       - ./research_agent.py:/app/research_agent.py
-      - ./shared:/app/shared
-      - ./shared/certs:/app/shared/certs:ro
+      - ./src/shared:/app/shared
+      - ./src/shared/certs:/app/shared/certs:ro
       - ./audit_trail.db:/app/audit_trail.db
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
@@ -184,7 +184,7 @@ services:
   mcp-grid-state:
     build:
       context: .
-      dockerfile: ./mcp_servers/grid_state/Dockerfile
+      dockerfile: ./src/mcp_servers/grid_state/Dockerfile
     container_name: mcp-grid-state
     environment:
       - AGENT_ID=mcp-grid-state

@@ -1,3 +1,13 @@
+import sys
+from pathlib import Path
+
+_repo = Path(__file__).resolve().parent.parent
+_src = Path(__file__).resolve().parent
+for _p in (_src, _repo):
+    _entry = str(_p)
+    if _entry not in sys.path:
+        sys.path.insert(0, _entry)
+
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -15,6 +25,8 @@ from shared.audit_context import begin_audit_invocation, clear_audit_invocation
 from shared.control_decisions import list_operator_alerts
 from shared.rag import initialize_rag_system
 from shared.runner_plugins import CHAT_AGENT_PROFILES, plugins_for_chat_agent
+
+_DOCS_DIR = str(Path(__file__).resolve().parent / "shared" / "docs")
 
 CHAT_AGENTS = {
     "microgrid": microgrid_agent,
@@ -63,7 +75,7 @@ def build_chat_app() -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         print("Initializing RAG system...")
-        result = initialize_rag_system("./shared/docs")
+        result = initialize_rag_system(_DOCS_DIR)
         if result["status"] == "success":
             print(f"RAG ready: {result['load_result']['loaded_count']} chunks")
         else:
@@ -147,7 +159,7 @@ def run_chat_server(port: int = 8002) -> None:
 
 
 if __name__ == "__main__":
-    result = initialize_rag_system("./shared/docs")
+    result = initialize_rag_system(_DOCS_DIR)
     if result["status"] == "success":
         print(f"RAG ready: {result['load_result']['loaded_count']} chunks")
     run_chat_server()

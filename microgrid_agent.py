@@ -1,3 +1,12 @@
+import sys
+from pathlib import Path
+
+_root = Path(__file__).resolve().parent
+for _p in (_root / "src", _root):
+    _entry = str(_p)
+    if _entry not in sys.path:
+        sys.path.insert(0, _entry)
+
 import time
 from typing import Any, Dict, List, Optional
 from google.adk.agents import Agent
@@ -14,13 +23,7 @@ from shared.config import (
 from shared.runner_plugins import build_adk_plugins
 from shared.state import _read_state, _write_state
 from shared.agent_server import run_agent_server
-from shared.agent_interfaces import (
-    RAG_access,
-    solar_agent_access,
-    wind_agent_access,
-    battery_agent_access,
-    load_agent_access
-)
+from shared.agent_interfaces import RAG_access
 
 def set_operational_priorities(
     tool_context: Any,
@@ -163,7 +166,7 @@ def send_grid_management_alert(tool_context: Any, receiver: str, subject: str,
 def request_agent_analysis(tool_context: Any, target_agent: str, research_subject: str,
                          analysis_request: str, priority: str = "medium") -> Dict[str, Any]:
     """
-    Request analysis from researcher or domain agents using KQML query.
+    Request analysis from researcher or control agents using KQML query.
     
     Args:
         target_agent: Target agent ID (e.g. "researcher-agent")
@@ -183,7 +186,7 @@ def request_agent_analysis(tool_context: Any, target_agent: str, research_subjec
 def propose_grid_operation(tool_context: Any, target_agent: str, operation_subject: str,
                          operation_details: str, priority: str = "high") -> Dict[str, Any]:
     """
-    Propose grid operation to control or domain agents using KQML propose.
+    Propose grid operation to control or researcher agents using KQML propose.
     
     Args:
         target_agent: Target agent ID (e.g. "control-agent")
@@ -262,13 +265,9 @@ TOOLS AVAILABLE:
 - monitor_system_health: Run health checks on the full system
 - retrieve_grid_state: Get ground truth system state from MCP server
 - send_grid_management_alert: Send operational alerts to agents (KQML inform)
-- request_agent_analysis: Request analysis from researcher or domain agents (KQML query)
-- propose_grid_operation: Propose operations to control/domain agents (KQML propose)
+- request_agent_analysis: Request analysis from researcher or control agents (KQML query)
+- propose_grid_operation: Propose operations to control or researcher agents (KQML propose)
 - RAG_access: Access knowledge base for best practices
-- solar_agent_access: Monitor solar generation via KQML
-- wind_agent_access: Monitor wind generation via KQML
-- battery_agent_access: Monitor battery storage via KQML
-- load_agent_access: Monitor controllable loads via KQML
 
 SUPERVISORY PRINCIPLES:
 - Verify Control Agent decisions
@@ -296,10 +295,6 @@ You work collaboratively with all agents, providing strategic guidance while all
         request_agent_analysis,
         propose_grid_operation,
         RAG_access,
-        solar_agent_access,
-        wind_agent_access,
-        battery_agent_access,
-        load_agent_access,
     ]
 )
 
