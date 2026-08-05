@@ -44,7 +44,7 @@ const ChatInterface = () => {
     try {
       // Get auth token from localStorage (you'll need to implement auth)
       const token = localStorage.getItem('authToken') || 'demo-token';
-      
+
       const response = await axios.post('http://localhost:8002/chat', {
         message: inputMessage,
         agent: selectedAgent
@@ -66,7 +66,7 @@ const ChatInterface = () => {
       setMessages(prev => [...prev, agentMessage]);
     } catch (error) {
       console.error('Error sending message:', error);
-      
+
       const errorMessage = {
         id: Date.now() + 1,
         text: 'Sorry, I encountered an error processing your message. Please try again.',
@@ -108,80 +108,80 @@ const ChatInterface = () => {
     'w-full rounded-2xl px-4 py-3 shadow-lg ring-1 ring-black/5';
 
   const messageBubbleSizing =
-    'max-w-[92vw] sm:max-w-[80vw] lg:max-w-2xl xl:max-w-4xl';
+    'w-full max-w-[95%] md:max-w-[90%] lg:max-w-[85%] xl:max-w-[80%]';
 
   const markdownComponents = {
     p: ({ node, ...props }) => (
-      <p className="whitespace-pre-wrap break-words leading-7" {...props} />
+      <p className="whitespace-pre-wrap break-words leading-7 mb-2 last:mb-0" {...props} />
     ),
     ul: ({ node, ...props }) => (
-      <ul className="list-disc space-y-1 pl-5 marker:text-current" {...props} />
+      <ul className="list-disc space-y-1 pl-6 my-2 marker:text-cyan-400" {...props} />
     ),
     ol: ({ node, ...props }) => (
-      <ol className="list-decimal space-y-1 pl-5 marker:text-current" {...props} />
+      <ol className="list-decimal space-y-1 pl-6 my-2 marker:text-cyan-400" {...props} />
     ),
     li: ({ node, ...props }) => (
       <li className="whitespace-pre-wrap break-words" {...props} />
     ),
     h1: ({ node, children, ...props }) => (
-      <h1 className="mb-2 text-lg font-semibold leading-7" {...props}>
+      <h1 className="mb-3 mt-4 text-xl font-bold text-cyan-300 border-b border-cyan-500/30 pb-1" {...props}>
         {children}
       </h1>
     ),
     h2: ({ node, children, ...props }) => (
-      <h2 className="mb-2 text-base font-semibold leading-6" {...props}>
+      <h2 className="mb-2 mt-3 text-lg font-semibold text-cyan-200" {...props}>
         {children}
       </h2>
     ),
     h3: ({ node, children, ...props }) => (
-      <h3 className="mb-2 text-sm font-semibold leading-6" {...props}>
+      <h3 className="mb-2 mt-2 text-base font-semibold text-slate-200" {...props}>
         {children}
       </h3>
     ),
-    strong: ({ node, children, ...props }) => (
-      <strong className="font-semibold text-white" {...props}>
-        {children}
-      </strong>
+    table: ({ node, ...props }) => (
+      <div className="my-4 overflow-x-auto rounded-lg border border-slate-700 bg-slate-900/80 shadow-md">
+        <table className="w-full border-collapse text-left text-sm" {...props} />
+      </div>
     ),
-    em: ({ node, children, ...props }) => (
-      <em className="italic" {...props}>
-        {children}
-      </em>
+    thead: ({ node, ...props }) => (
+      <thead className="bg-slate-800/90 text-cyan-300 border-b border-slate-700" {...props} />
     ),
-    a: ({ node, children, ...props }) => (
-      <a
-        className="font-medium underline decoration-white/50 underline-offset-2 hover:decoration-white"
-        target="_blank"
-        rel="noreferrer"
-        {...props}
-      >
-        {children}
-      </a>
+    tbody: ({ node, ...props }) => (
+      <tbody className="divide-y divide-slate-800" {...props} />
+    ),
+    tr: ({ node, ...props }) => (
+      <tr className="hover:bg-slate-800/50 transition-colors" {...props} />
+    ),
+    th: ({ node, ...props }) => (
+      <th className="px-4 py-2.5 font-semibold text-xs uppercase tracking-wider text-cyan-400" {...props} />
+    ),
+    td: ({ node, ...props }) => (
+      <td className="px-4 py-2 text-slate-300 font-mono text-xs" {...props} />
     ),
     code: ({ inline, className, children, ...props }) =>
       inline ? (
         <code
-          className="rounded bg-black/25 px-1.5 py-0.5 font-mono text-[0.85em] text-white/95"
+          className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-xs text-cyan-300 border border-slate-700/50"
           {...props}
         >
           {children}
         </code>
       ) : (
         <code
-          className={`${className || ''} block overflow-x-auto rounded-xl bg-slate-950/70 p-3 font-mono text-sm leading-6 text-slate-100`}
+          className={`${className || ''} block overflow-x-auto rounded-xl bg-slate-950 p-4 font-mono text-xs leading-6 text-slate-200 border border-slate-800 shadow-inner my-2`}
           {...props}
         >
           {children}
         </code>
       ),
     pre: ({ node, children, ...props }) => (
-      <pre className="my-3 overflow-x-auto rounded-xl bg-slate-950/70 p-0" {...props}>
+      <pre className="my-3 overflow-x-auto rounded-xl bg-slate-950 p-0" {...props}>
         {children}
       </pre>
     ),
     blockquote: ({ node, children, ...props }) => (
       <blockquote
-        className="border-l-2 border-white/25 pl-3 italic text-white/90"
+        className="my-3 border-l-4 border-cyan-500 bg-cyan-950/20 py-2 px-4 rounded-r text-slate-300 italic"
         {...props}
       >
         {children}
@@ -190,16 +190,6 @@ const ChatInterface = () => {
   };
 
   const renderMessageContent = (message) => {
-    const isAgentMessage = message.sender === 'agent';
-
-    if (!isAgentMessage) {
-      return (
-        <div className="whitespace-pre-wrap break-words text-sm leading-6">
-          {message.text}
-        </div>
-      );
-    }
-
     return (
       <div className="chat-markdown text-sm leading-6">
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
@@ -213,11 +203,11 @@ const ChatInterface = () => {
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-white/10 bg-slate-900/90 p-4 shadow-lg backdrop-blur">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
+        <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-4">
           <h1 className="text-xl font-semibold text-slate-100">
             Microgrid Agent Chat
           </h1>
-          
+
           {/* Agent Selector */}
           <div className="flex items-center space-x-2">
             <label htmlFor="agent-select" className="text-sm font-medium text-slate-300">
@@ -239,7 +229,7 @@ const ChatInterface = () => {
 
       {/* Messages Area */}
       <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-950 to-slate-900 px-4 py-6">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4">
         {messages.map((message) => (
           <div
             key={message.id}
@@ -269,7 +259,7 @@ const ChatInterface = () => {
 
         {isLoading && (
           <div className="flex justify-start">
-            <div className="max-w-[92vw] rounded-2xl bg-slate-800/90 px-4 py-3 text-slate-100 shadow-lg ring-1 ring-black/5 sm:max-w-[80vw] lg:max-w-2xl xl:max-w-4xl">
+            <div className={`${messageBubbleBase} ${messageBubbleSizing} bg-slate-800/90 text-slate-100`}>
               <div className="flex items-center space-x-2">
                 <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-slate-300"></div>
                 <span className="text-sm text-slate-300">
@@ -286,7 +276,7 @@ const ChatInterface = () => {
 
       {/* Input Area */}
       <div className="sticky bottom-0 z-30 border-t border-white/10 bg-slate-900/95 p-4 shadow-[0_-8px_30px_rgba(0,0,0,0.25)] backdrop-blur">
-        <form onSubmit={handleSendMessage} className="mx-auto flex w-full max-w-7xl space-x-2">
+        <form onSubmit={handleSendMessage} className="mx-auto flex w-full max-w-[1600px] space-x-2">
           <input
             type="text"
             value={inputMessage}
