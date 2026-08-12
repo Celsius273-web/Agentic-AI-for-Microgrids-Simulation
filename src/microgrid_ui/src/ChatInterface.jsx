@@ -187,6 +187,17 @@ const ChatInterface = () => {
         {children}
       </blockquote>
     ),
+    a: ({ node, children, ...props }) => (
+      <a
+        className="text-cyan-200 underline underline-offset-2 hover:text-cyan-100"
+        target="_blank"
+        rel="noopener noreferrer"
+        {...props}
+      >
+        {children}
+      </a>
+    ),
+    img: () => null,
   };
 
   const renderMessageContent = (message) => {
