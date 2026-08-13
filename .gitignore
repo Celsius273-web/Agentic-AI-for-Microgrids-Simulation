@@ -1,0 +1,8 @@
+.env
+venv
+**/node_modules
+**/build
+**/__pycache__
+
+# I needed to change how my agent works but it's not really important for anyone else
+AGENTS.md

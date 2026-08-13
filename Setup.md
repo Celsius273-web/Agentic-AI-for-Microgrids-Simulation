@@ -61,7 +61,7 @@ Open http://localhost:3000. Select **Microgrid**, **Research**, or **Monitor** a
 
 ```bash
 pip install fastapi uvicorn pydantic
-python3 src/demo_chat_simple.py   # default port 8001 — UI is hard-coded to 8002
+python3 src/demo_chat_simple.py
 ```
 
 For the React UI with the mock API, either run the demo on 8002 (`python3 -c "from src.demo_chat_simple import run_demo_server; run_demo_server(8002)"`) or use `src/chat_server.py` above.
