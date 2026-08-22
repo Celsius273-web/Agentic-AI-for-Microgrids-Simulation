@@ -10,3 +10,6 @@ pykqml
 chromadb
 sentence-transformers
 python-multipart
+kagglehub
+pandas
+pyarrow
