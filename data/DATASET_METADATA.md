@@ -32,4 +32,4 @@ The ingestion pipeline (`src/pipeline/process_dataset.py`) converts the 15 month
 ## Preprocessing & Data Cleaning
 - **Dropout Code Filtering**: Raw sensor dropout / error codes (`-999999.0`) are converted to `NaN`.
 - **Interpolation**: Short missing intervals ($\le 1\text{ minute}$) are linearly interpolated; extended gaps are forward/backward filled.
-- **Physical Bounds**: Values are strictly clamped to realistic operating bounds to avoid corrupted grid states in simulation.
+- **Physical Bounds**: Values outside realistic operating ranges are masked to `NaN` and then interpolated (short gaps) or forward/backward filled (extended gaps) to avoid corrupted grid states in simulation.
