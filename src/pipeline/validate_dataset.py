@@ -14,6 +14,8 @@ def validate_parquet(file_path: Path) -> None:
         raise FileNotFoundError(f"File does not exist: {file_path}")
     
     df = pd.read_parquet(file_path)
+    if df.empty:
+        raise ValueError(f"Processed dataset is empty: {file_path.name}")
     print(f"[Validate] Validating {file_path.name} ({len(df):,} records)...")
 
     # 1. Required schema check (including chilled water temperature)
