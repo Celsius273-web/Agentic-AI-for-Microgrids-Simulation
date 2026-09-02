@@ -18,7 +18,7 @@ def download_dataset():
     print(f"[Dataset Download] Downloaded to cache: {download_path}")
 
     # Copy CSV files to data/raw/
-    csv_files = glob.glob(os.path.join(download_path, "*.csv"))
+    csv_files = glob.glob(os.path.join(download_path, "**", "*.csv"), recursive=True)
     if not csv_files:
         raise FileNotFoundError(f"No CSV files found in kagglehub cache directory: {download_path}")
 
