@@ -27,7 +27,7 @@ def get_file_chronological_key(file_path: str) -> pd.Timestamp:
     except Exception:
         return pd.Timestamp.min
 
-def extract_and_sanitize(df: pd.DataFrame, candidates: list[str], 
+def extract_and_sanitize(df: pd.DataFrame, candidates: list[str],
                          min_valid: float, max_valid: float, default_val: float) -> pd.Series:
     """
     Extracts a column matching candidate names, strips sentinel error codes (-999999.0),
@@ -38,14 +38,14 @@ def extract_and_sanitize(df: pd.DataFrame, candidates: list[str],
         if c in df.columns:
             series = pd.to_numeric(df[c], errors='coerce')
             break
-    
+
     if series is None:
         return pd.Series(default_val, index=df.index, dtype=float)
 
     # Convert sensor dropout sentinel codes (e.g. -999999.0) and out-of-range values to NaN
     series = series.mask((series < min_valid) | (series > max_valid), np.nan)
 
-    # Time-series interpolation for short dropouts (up to 1 minute / 6 steps)
+    # Time-series interpolation for short dropouts (up to 2 minutes / 12 steps at 10s resolution)
     series = series.interpolate(method='linear', limit=12)
     # Forward-fill and backward-fill remaining gaps, with fallback default
     series = series.ffill().bfill().fillna(default_val)
@@ -62,31 +62,31 @@ def process_monthly_file(file_path: str, initial_soc: float = DEFAULT_INITIAL_SO
 
     # Extract and sanitize columns with realistic physical bounds (sentinel code filtering)
     # 1. Solar PV (0 to 100 kW)
-    pv_power = extract_and_sanitize(df, ['PVPCS_Active_Power', 'PVPCS Active Power'], 
+    pv_power = extract_and_sanitize(df, ['PVPCS_Active_Power', 'PVPCS Active Power'],
                                     min_valid=-10.0, max_valid=500.0, default_val=0.0).clip(lower=0.0)
-    
+
     # 2. Total Grid Load (0 to 1000 kW)
-    ge_power = extract_and_sanitize(df, ['GE_Active_Power', 'GE Active Power'], 
+    ge_power = extract_and_sanitize(df, ['GE_Active_Power', 'GE Active Power'],
                                     min_valid=-10.0, max_valid=2000.0, default_val=0.0).clip(lower=0.0)
-    
+
     # 3. Battery Active Power (-500 kW charge to +500 kW discharge)
-    battery_power = extract_and_sanitize(df, ['Battery_Active_Power', 'Battery Active Power'], 
+    battery_power = extract_and_sanitize(df, ['Battery_Active_Power', 'Battery Active Power'],
                                          min_valid=-500.0, max_valid=500.0, default_val=0.0)
-    
+
     # 4. Fuel Cell (0 to 200 kW)
-    fc_power = extract_and_sanitize(df, ['FC_Active_Power', 'FC Active Power'], 
+    fc_power = extract_and_sanitize(df, ['FC_Active_Power', 'FC Active Power'],
                                     min_valid=-10.0, max_valid=500.0, default_val=0.0).clip(lower=0.0)
-    
+
     # 5. Voltage (300V to 600V for 480V 3-phase microgrid bus)
-    voltage = extract_and_sanitize(df, ['MG-LV-MSB_AC_Voltage', 'MG-LV-MSB AC Voltage', 'Receiving_Point_AC_Voltage'], 
+    voltage = extract_and_sanitize(df, ['MG-LV-MSB_AC_Voltage', 'MG-LV-MSB AC Voltage', 'Receiving_Point_AC_Voltage'],
                                     min_valid=300.0, max_valid=600.0, default_val=480.0)
-    
+
     # 6. Frequency (55.0 to 65.0 Hz for 60Hz microgrid)
-    frequency = extract_and_sanitize(df, ['MG-LV-MSB_Frequency', 'MG-LV-MSB Frequency', 'Island_mode_MCCB_Frequency'], 
+    frequency = extract_and_sanitize(df, ['MG-LV-MSB_Frequency', 'MG-LV-MSB Frequency', 'Island_mode_MCCB_Frequency'],
                                       min_valid=55.0, max_valid=65.0, default_val=60.0)
-    
+
     # 7. Chilled water temperature (0 to 50 C)
-    inlet_temp = extract_and_sanitize(df, ['Inlet_Temperature_of_Chilled_Water', 'Inlet Temperature of Chilled Water'], 
+    inlet_temp = extract_and_sanitize(df, ['Inlet_Temperature_of_Chilled_Water', 'Inlet Temperature of Chilled Water'],
                                       min_valid=0.0, max_valid=60.0, default_val=20.0)
 
     # Unit conversions (kW -> MW)
@@ -108,12 +108,12 @@ def process_monthly_file(file_path: str, initial_soc: float = DEFAULT_INITIAL_SO
     # Positive battery_power_kw = discharging (SOC decreases)
     energy_delta_kwh = -processed['battery_power_kw'] * dt_hours
     soc_series = [initial_soc]
-    
+
     current_soc = initial_soc
     for delta_e in energy_delta_kwh:
         current_soc = max(10.0, min(95.0, current_soc + (delta_e / BATTERY_CAPACITY_KWH * 100.0)))
         soc_series.append(current_soc)
-    
+
     processed['battery_soc'] = soc_series[:-1]
     final_soc = soc_series[-1]
 
@@ -137,7 +137,7 @@ def resample_month(df: pd.DataFrame, rule: str) -> pd.DataFrame:
 
 def run_pipeline():
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     # Sort files strictly chronologically (May 2022 -> Jul 2023)
     raw_files = glob.glob(str(RAW_DIR / "*.csv"))
     if not raw_files:
@@ -145,7 +145,7 @@ def run_pipeline():
     csv_files = sorted(raw_files, key=get_file_chronological_key)
 
     print(f"[Pipeline] Found {len(csv_files)} monthly files. Ingesting with streaming PyArrow ParquetWriter...")
-    
+
     out_10s = PROCESSED_DIR / "mesa_del_sol_10s.parquet"
     out_1m = PROCESSED_DIR / "mesa_del_sol_1m.parquet"
     out_5m = PROCESSED_DIR / "mesa_del_sol_5m.parquet"
@@ -164,7 +164,7 @@ def run_pipeline():
         for file_path in csv_files:
             file_name = os.path.basename(file_path)
             print(f"  -> Streaming {file_name} (initial SOC: {current_soc:.2f}%)...")
-            
+
             # Process single month
             df_month, current_soc = process_monthly_file(file_path, initial_soc=current_soc)
 
