@@ -1,13 +1,16 @@
 """
 src/pipeline/process_dataset.py
 Processes raw monthly CSVs into memory-efficient, multi-resolution Parquet datasets.
-Handles sensor dropout sentinels (-999999.0), missing data imputation, and accurate physics.
+Streams data incrementally via PyArrow ParquetWriter to maintain a constant O(1) memory footprint.
+Handles chronological sequencing, sensor dropout sentinels (-999999.0), missing data imputation, and accurate physics.
 """
 import os
 import glob
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 RAW_DIR = ROOT_DIR / "data" / "raw"
@@ -15,6 +18,14 @@ PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 
 BATTERY_CAPACITY_KWH = 500.0  # 500 kWh simulated BESS capacity
 DEFAULT_INITIAL_SOC = 60.0    # Baseline SOC percentage
+
+def get_file_chronological_key(file_path: str) -> pd.Timestamp:
+    """Extract month and year from filename (e.g., 'May_2022.csv') for strict temporal sorting."""
+    stem = Path(file_path).stem
+    try:
+        return pd.to_datetime(stem, format='%b_%Y')
+    except Exception:
+        return pd.Timestamp.min
 
 def extract_and_sanitize(df: pd.DataFrame, candidates: list[str], 
                          min_valid: float, max_valid: float, default_val: float) -> pd.Series:
@@ -35,7 +46,7 @@ def extract_and_sanitize(df: pd.DataFrame, candidates: list[str],
     series = series.mask((series < min_valid) | (series > max_valid), np.nan)
 
     # Time-series interpolation for short dropouts (up to 1 minute / 6 steps)
-    series = series.interpolate(method='linear', limit=6)
+    series = series.interpolate(method='linear', limit=12)
     # Forward-fill and backward-fill remaining gaps, with fallback default
     series = series.ffill().bfill().fillna(default_val)
     return series
@@ -45,7 +56,7 @@ def process_monthly_file(file_path: str, initial_soc: float = DEFAULT_INITIAL_SO
     df = pd.read_csv(file_path)
     df.columns = df.columns.str.strip()
 
-    # Parse timestamps and sort
+    # Parse timestamps and sort chronologically within the month
     df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
     df = df.dropna(subset=['Timestamp']).sort_values('Timestamp').reset_index(drop=True)
 
@@ -108,74 +119,94 @@ def process_monthly_file(file_path: str, initial_soc: float = DEFAULT_INITIAL_SO
 
     return processed, final_soc
 
+def resample_month(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Downsample a monthly DataFrame to 1-minute or 5-minute averages."""
+    resampled = df.set_index('datetime').resample(rule).agg({
+        'solar_mw': 'mean',
+        'wind_mw': 'mean',
+        'load_mw': 'mean',
+        'fuel_cell_mw': 'mean',
+        'battery_power_kw': 'mean',
+        'battery_soc': 'last',
+        'voltage_v': 'mean',
+        'frequency_hz': 'mean',
+        'chilled_water_temp_c': 'mean'
+    }).dropna().reset_index()
+    resampled['timestamp'] = resampled['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+    return resampled.drop(columns=['datetime'])
+
 def run_pipeline():
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    csv_files = sorted(glob.glob(str(RAW_DIR / "*.csv")))
-    if not csv_files:
+    
+    # Sort files strictly chronologically (May 2022 -> Jul 2023)
+    raw_files = glob.glob(str(RAW_DIR / "*.csv"))
+    if not raw_files:
         raise FileNotFoundError(f"No CSV files found in {RAW_DIR}. Run download_dataset.py first!")
+    csv_files = sorted(raw_files, key=get_file_chronological_key)
 
-    print(f"[Pipeline] Found {len(csv_files)} monthly files. Ingesting incrementally...")
-    monthly_dfs = []
+    print(f"[Pipeline] Found {len(csv_files)} monthly files. Ingesting with streaming PyArrow ParquetWriter...")
+    
+    out_10s = PROCESSED_DIR / "mesa_del_sol_10s.parquet"
+    out_1m = PROCESSED_DIR / "mesa_del_sol_1m.parquet"
+    out_5m = PROCESSED_DIR / "mesa_del_sol_5m.parquet"
+
+    writer_10s = None
+    writer_1m = None
+    writer_5m = None
+
+    total_rows_10s = 0
+    total_rows_1m = 0
+    total_rows_5m = 0
+
     current_soc = DEFAULT_INITIAL_SOC
 
-    for file_path in csv_files:
-        print(f"  -> Ingesting {os.path.basename(file_path)}...")
-        df_month, current_soc = process_monthly_file(file_path, initial_soc=current_soc)
-        monthly_dfs.append(df_month)
+    try:
+        for file_path in csv_files:
+            file_name = os.path.basename(file_path)
+            print(f"  -> Streaming {file_name} (initial SOC: {current_soc:.2f}%)...")
+            
+            # Process single month
+            df_month, current_soc = process_monthly_file(file_path, initial_soc=current_soc)
 
-    print("[Pipeline] Concatenating full time-series...")
-    full_df = pd.concat(monthly_dfs, ignore_index=True)
-    full_df = full_df.sort_values('datetime').reset_index(drop=True)
+            # 1. Stream 10-second data to ParquetWriter
+            df_10s_export = df_month.drop(columns=['datetime'])
+            table_10s = pa.Table.from_pandas(df_10s_export, preserve_index=False)
+            if writer_10s is None:
+                writer_10s = pq.ParquetWriter(out_10s, table_10s.schema, compression='snappy')
+            writer_10s.write_table(table_10s)
+            total_rows_10s += len(df_10s_export)
 
-    # 1. Export Full 10-Second Parquet
-    out_10s = PROCESSED_DIR / "mesa_del_sol_10s.parquet"
-    export_df_10s = full_df.drop(columns=['datetime'])
-    export_df_10s.to_parquet(out_10s, compression='snappy', index=False)
-    print(f"[Pipeline] Saved 10-second dataset to {out_10s} ({out_10s.stat().st_size / 1e6:.2f} MB, {len(export_df_10s):,} rows)")
+            # 2. Resample month to 1-minute and stream
+            df_1m = resample_month(df_month, '1min')
+            table_1m = pa.Table.from_pandas(df_1m, preserve_index=False)
+            if writer_1m is None:
+                writer_1m = pq.ParquetWriter(out_1m, table_1m.schema, compression='snappy')
+            writer_1m.write_table(table_1m)
+            total_rows_1m += len(df_1m)
 
-    # 2. Export 1-Minute Downsampled Parquet
-    print("[Pipeline] Computing 1-minute aggregation...")
-    full_df.set_index('datetime', inplace=True)
-    df_1m = full_df.resample('1min').agg({
-        'solar_mw': 'mean',
-        'wind_mw': 'mean',
-        'load_mw': 'mean',
-        'fuel_cell_mw': 'mean',
-        'battery_power_kw': 'mean',
-        'battery_soc': 'last',
-        'voltage_v': 'mean',
-        'frequency_hz': 'mean',
-        'chilled_water_temp_c': 'mean'
-    }).dropna().reset_index()
-    df_1m['timestamp'] = df_1m['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-    df_1m = df_1m.drop(columns=['datetime'])
-    out_1m = PROCESSED_DIR / "mesa_del_sol_1m.parquet"
-    df_1m.to_parquet(out_1m, compression='snappy', index=False)
-    print(f"[Pipeline] Saved 1-minute dataset to {out_1m} ({out_1m.stat().st_size / 1e6:.2f} MB, {len(df_1m):,} rows)")
+            # 3. Resample month to 5-minute and stream
+            df_5m = resample_month(df_month, '5min')
+            table_5m = pa.Table.from_pandas(df_5m, preserve_index=False)
+            if writer_5m is None:
+                writer_5m = pq.ParquetWriter(out_5m, table_5m.schema, compression='snappy')
+            writer_5m.write_table(table_5m)
+            total_rows_5m += len(df_5m)
 
-    # 3. Export 5-Minute Downsampled Parquet
-    print("[Pipeline] Computing 5-minute aggregation...")
-    df_5m = df_1m.copy()
-    df_5m['datetime'] = pd.to_datetime(df_5m['timestamp'])
-    df_5m.set_index('datetime', inplace=True)
-    df_5m = df_5m.resample('5min').agg({
-        'solar_mw': 'mean',
-        'wind_mw': 'mean',
-        'load_mw': 'mean',
-        'fuel_cell_mw': 'mean',
-        'battery_power_kw': 'mean',
-        'battery_soc': 'last',
-        'voltage_v': 'mean',
-        'frequency_hz': 'mean',
-        'chilled_water_temp_c': 'mean'
-    }).dropna().reset_index()
-    df_5m['timestamp'] = df_5m['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-    df_5m = df_5m.drop(columns=['datetime'])
-    out_5m = PROCESSED_DIR / "mesa_del_sol_5m.parquet"
-    df_5m.to_parquet(out_5m, compression='snappy', index=False)
-    print(f"[Pipeline] Saved 5-minute dataset to {out_5m} ({out_5m.stat().st_size / 1e6:.2f} MB, {len(df_5m):,} rows)")
+            # Explicitly free monthly memory
+            del df_month, df_10s_export, df_1m, df_5m, table_10s, table_1m, table_5m
 
-    print("[Pipeline] Pipeline execution successfully completed!")
+    finally:
+        if writer_10s:
+            writer_10s.close()
+        if writer_1m:
+            writer_1m.close()
+        if writer_5m:
+            writer_5m.close()
+
+    print(f"[Pipeline] Saved 10-second dataset: {out_10s} ({out_10s.stat().st_size / 1e6:.2f} MB, {total_rows_10s:,} rows)")
+    print(f"[Pipeline] Saved 1-minute dataset: {out_1m} ({out_1m.stat().st_size / 1e6:.2f} MB, {total_rows_1m:,} rows)")
+    print(f"[Pipeline] Saved 5-minute dataset: {out_5m} ({out_5m.stat().st_size / 1e6:.2f} MB, {total_rows_5m:,} rows)")
+    print("[Pipeline] Streaming pipeline execution successfully completed!")
 
 if __name__ == "__main__":
     run_pipeline()
