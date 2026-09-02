@@ -4,7 +4,6 @@ Verifies dataset integrity, schema conformity, physical limits, and zero nulls.
 """
 from pathlib import Path
 import pandas as pd
-import numpy as np
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 PROCESSED_DIR = ROOT_DIR / "data" / "processed"
