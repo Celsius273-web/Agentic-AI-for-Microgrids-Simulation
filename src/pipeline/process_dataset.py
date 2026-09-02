@@ -35,7 +35,7 @@ def extract_and_sanitize(df: pd.DataFrame, candidates: list[str],
     series = series.mask((series < min_valid) | (series > max_valid), np.nan)
 
     # Time-series interpolation for short dropouts (up to 1 minute / 6 steps)
-    series = series.interpolate(method='linear', limit=12)
+    series = series.interpolate(method='linear', limit=6)
     # Forward-fill and backward-fill remaining gaps, with fallback default
     series = series.ffill().bfill().fillna(default_val)
     return series
