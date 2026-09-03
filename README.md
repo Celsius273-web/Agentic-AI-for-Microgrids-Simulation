@@ -33,9 +33,9 @@ Because a multi agent system requires a lot of continuous back and forth convers
 
 ### Next Steps and Known gaps
 
-- I need to optimize the agent prompts and limit how often the Monitor and Researcher agents run. Delimma: lower token counts while keeping decision quality high.
+- I need to optimize the agent prompts and limit how often the Monitor and Researcher agents run. Dilemma: lower token counts while keeping decision quality high.
 - I am looking for a more sustainable source of API tokens or credits so the multi-agent team can run uninterrupted.
-- My initial tests proved that having the agents read static text logs wasn't useful for realistic grid management. I am now working to integrate actual time series datasets (from Kaggle and elsewhere) so the system can process real, constantly fluctuating numbers like solar output, battery percentages, and power load.
+- Successfully integrated the 15-month Mesa Del Sol microgrid dataset (`src/pipeline/`), generating multi-resolution Parquet telemetry (`10s`, `1m`, `5m` in `data/processed/`). Next step is connecting the playback engine to Redis.
 - UI auth uses a placeholder `demo-token`; production path needs Keycloak tokens wired in the UI.
 - Monitor auto review on every control decision requires Control to call `record_control_decision` and Monitor to be invoked (not a background agent yet).
 - No cloud deployment or production hardening.

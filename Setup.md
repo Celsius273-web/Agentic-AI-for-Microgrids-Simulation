@@ -41,6 +41,23 @@ Setup.md
 - Docker & Docker Compose (multi-agent stack)
 - [Gemini API key](https://aistudio.google.com/apikey) for ADK agents and `src/chat_server.py`
 
+## Dataset Pipeline (Mesa Del Sol Microgrid Data)
+
+To download and process the real-world 15-month microgrid time-series dataset:
+
+```bash
+# 1. Download raw CSVs from Kaggle to data/raw/
+python3 src/pipeline/download_dataset.py
+
+# 2. Ingest, sanitize, calculate SOC, and generate multi-resolution Parquet files
+python3 src/pipeline/process_dataset.py
+
+# 3. Validate processed datasets (10s, 1m, 5m resolutions in data/processed/)
+python3 src/pipeline/validate_dataset.py
+```
+
+See [data/DATASET_METADATA.md](data/DATASET_METADATA.md) for full telemetry schema mappings and details.
+
 ## Quick start — chat UI with real agents
 
 ```bash
